@@ -152,7 +152,7 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
         if status == 2:
             existing_client = None
             for client in settings.get("clients", []):
-                if client.get("tgId") == tg_id:
+                if str(client.get("tgId")) == str(tg_id):
                     existing_client = client
                     break
             if existing_client is None:
