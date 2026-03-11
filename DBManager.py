@@ -43,3 +43,10 @@ def add_user(tg_id, is_approved=0):
     cursor.execute('INSERT OR IGNORE INTO users (tg_id, is_approved) VALUES (?, ?)', (tg_id, is_approved))
     cursor.execute('UPDATE users SET is_approved = ? WHERE tg_id = ?', (is_approved, tg_id))
     return conn.commit()
+
+
+def get_vpn_users():
+    if not cursor or not conn:
+        return []
+    cursor.execute('SELECT tg_id FROM users WHERE is_approved == 2')
+    return [row[0] for row in cursor.fetchall()]

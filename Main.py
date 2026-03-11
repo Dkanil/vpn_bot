@@ -13,6 +13,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 load_dotenv()
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -24,6 +25,33 @@ dp["auth_manager"] = None
 class AdminAction(CallbackData, prefix="admin"):
     action: str
     user_id: int
+
+
+async def send_quarterly_payment_notification():
+    print("----- Запуск рассылки об оплате... -----")
+    try:
+        users = DBManager.get_vpn_users()
+        text = (
+            "🔔 <b>Напоминание об оплате VPN</b>\n\n"
+            "Пожалуйста, оплатите подписку на следующие 3 месяца.\n\n"
+            "ℹ️ <i>Реквизиты для оплаты:</i>\n"
+            f"По номеру телефона: {os.getenv('PAYMENT')}\n"
+        )
+
+        count = 0
+        for user_id in users:
+            try:
+                await bot.send_message(user_id, text, parse_mode=ParseMode.HTML)
+                count += 1
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                print(f"Не удалось отправить юзеру {user_id}: {e}")
+
+        print(f"✅ Рассылка завершена. Отправлено: {count}")
+        await bot.send_message(ADMIN_ID, f"📢 Автоматическая рассылка проведена.\nДоставлено сообщений: {count}")
+
+    except Exception as e:
+        print(f"❌ Ошибка при рассылке: {e}")
 
 
 async def add_vpn_client(user_info, auth_manager: AuthManager):
@@ -222,10 +250,21 @@ async def main():
     dp.message.middleware(Filter.BannedUserMiddleware())
     dp.callback_query.middleware(Filter.BannedUserMiddleware())
 
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        send_quarterly_payment_notification,
+        trigger='cron',
+        month='3,6,9,12',
+        day='5',
+        hour='12',
+        minute='00',
+    )
+    scheduler.start()
     try:
         await dp.start_polling(bot, auth_manager=auth_manager)
     finally:
         print("Выключение бота...")
+        scheduler.shutdown()
         DBManager.close_db()
         await auth_manager.close()
         print("Работа бота завершена.")
