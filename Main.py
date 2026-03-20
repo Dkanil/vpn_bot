@@ -22,6 +22,7 @@ bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 dp["auth_manager"] = None
 
+
 class AdminAction(CallbackData, prefix="admin"):
     action: str
     user_id: int
@@ -168,7 +169,6 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
             await message.answer("❌ Ошибка при создании токена")
             return
 
-
         stream_settings = json.loads(inbound_obj.get("streamSettings"))
         net_type = stream_settings.get("network", "xhttp")
         security = stream_settings.get("security", "none")
@@ -194,7 +194,7 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
             xhttp = stream_settings.get("xhttpSettings", {})
             params["path"] = xhttp.get("path", "/")
             params["host"] = xhttp.get("host", "")
-            params["mode"] =  xhttp.get("mode", "auto")
+            params["mode"] = xhttp.get("mode", "auto")
         else:
             raise Exception(f"Неизвестный тип сети: {response.get('msg')}")
 
@@ -230,12 +230,12 @@ async def help_cmd(message: types.Message):
 1️⃣ Получить свой токен с помощью команды /create_token
 
 2️⃣ Скачать и установить клиент для VPN:
-    - <b>Windows:</b> <a href='https://v2rayn.2dust.link/v2rayN-windows-64.zip'>Скачать v2rayN</a>
+    - <b>Windows:</b> <a href='https://v2rayn.2dust.link'>Скачать v2rayN</a> (Необходимо скачать <code>v2rayN-windows-64.zip</code>. Скачанный архив распаковать и запустить <code>v2rayN.exe</code>)
     - <b>Android:</b> <a href='https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box&hl=ru'>Скачать V2Box (Google Play)</a>
-    - <b>iPhone (iOS):</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
+    - <b>iPhone (iOS), macOs:</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
 
 3️⃣ Скопировать полученный токен и вставить его в клиент для подключения к VPN.
-📱 <b>На телефоне (V2Box):</b> 
+📱 <b>На телефоне и macOS (V2Box):</b> 
 Перейдите на вкладку <i>«Конфигурации»</i> (снизу) ➔ нажмите <b>«+»</b> (сверху) ➔ выберите <i>«Импортировать v2ray из буфера обмена»</i>.
 
 💻 <b>На компьютере (v2rayN):</b> 
@@ -243,6 +243,7 @@ async def help_cmd(message: types.Message):
 
 4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали без VPN."""
                          , parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
 
 async def main():
     DBManager.init_db()
