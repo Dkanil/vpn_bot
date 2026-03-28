@@ -56,7 +56,10 @@ async def send_quarterly_payment_notification():
 
 
 async def add_vpn_client(user_info, auth_manager: AuthManager):
-    user_email = user_info.username
+    if user_info.username:
+        user_email = user_info.username
+    else:
+        user_email = f"user{user_info.id}"
     tg_id = user_info.id
     client_uuid = str(uuid.uuid4())
     sub_id = str(uuid.uuid4())
@@ -163,7 +166,10 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
             email = existing_client["email"]
         else:
             client_uuid, sub_id, msg = await add_vpn_client(message.from_user, auth_manager)
-            email = message.from_user.username
+            if message.from_user.username:
+                email = message.from_user.username
+            else:
+                email = f"user{message.from_user.id}"
 
         if not client_uuid:
             await message.answer("❌ Ошибка при создании токена")
