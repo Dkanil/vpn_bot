@@ -236,7 +236,10 @@ async def help_cmd(message: types.Message):
 1️⃣ Получить свой токен с помощью команды /create_token
 
 2️⃣ Скачать и установить клиент для VPN:
-    - <b>Windows:</b> <a href='https://v2rayn.2dust.link'>Скачать v2rayN</a> (Необходимо скачать <code>v2rayN-windows-64.zip</code>. Скачанный архив распаковать и запустить <code>v2rayN.exe</code>)
+    - <b>Windows:</b> <a href='https://v2rayn.2dust.link'>Скачать v2rayN</a> 
+        (Необходимо загрузить <code>v2rayN-windows-64.zip</code>) 
+        Скачанный архив распаковать и запустить <code>v2rayN.exe</code>
+        (Если с официального сайта грузит медленно, то можно скачать с GitHub тот же файл: <a href='https://github.com/2dust/v2rayN/releases'>GitHub</a>)
     - <b>Android:</b> <a href='https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box&hl=ru'>Скачать V2Box (Google Play)</a>
     - <b>iPhone (iOS), macOs:</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
 
