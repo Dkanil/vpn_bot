@@ -205,7 +205,7 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
             raise Exception(f"Неизвестный тип сети: {response.get('msg')}")
 
         query_string = urllib.parse.urlencode(params)
-        vless_link = f"vless://{client_uuid}@{os.getenv('SERVER_IP')}:{inbound_obj.get('port')}?{query_string}#vless-reality-{email}"
+        vless_link = f"vless://{client_uuid}@{os.getenv('SERVER_IP')}:{inbound_obj.get('port')}?{query_string}#{email}"
         sub_link = f"http://{os.getenv('SERVER_IP')}:2096/sub/{sub_id}"
         text = (
                 "✅ <b>Ваш персональный ключ создан!</b>\n" +
