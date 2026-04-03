@@ -10,7 +10,7 @@ import AuthManager
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -134,6 +134,34 @@ async def handle_admin_action(call: types.CallbackQuery, callback_data: AdminAct
         await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, "К сожалению, вам отказано в доступе.")
 
+@dp.message(Command('broadcast'))
+async def broadcast_command(message: types.Message, command: CommandObject):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    if not command.args:
+        await message.answer("Использование: /broadcast <текст сообщения>")
+        return
+
+    try:
+        text = command.args
+        users = DBManager.get_vpn_users()
+
+        await message.answer(f"⏳ Начинаю рассылку для {len(users)} пользователей...")
+        count = 0
+        for user_id in users:
+            try:
+                await bot.send_message(user_id, text, parse_mode=ParseMode.HTML)
+                count += 1
+                await asyncio.sleep(0.1)
+                print(f"Отправлено юзеру {user_id}")
+            except Exception as e:
+                print(f"Не удалось отправить юзеру {user_id}: {e}")
+
+        await message.answer(f"✅ Рассылка завершена.\nУспешно доставлено: {count} из {len(users)}")
+    except Exception as e:
+        print(f"Ошибка при рассылке: {e}")
+        await message.answer("❌ Произошла ошибка при рассылке.")
 
 @dp.message(Command('create_token'))
 async def create_token(message: types.Message, auth_manager: AuthManager):
