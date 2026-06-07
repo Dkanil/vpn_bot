@@ -1,8 +1,6 @@
 import asyncio
-import urllib
-import uuid
-import json
 import os
+from urllib.parse import quote
 
 import Filter
 import DBManager
@@ -13,12 +11,12 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 load_dotenv()
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 URL = os.getenv("URL")
 bot = Bot(token=os.getenv("BOT_TOKEN"))
+SUB_URL = os.environ.get("SUB_URL", "")
 dp = Dispatcher()
 dp["auth_manager"] = None
 
@@ -55,37 +53,73 @@ async def send_quarterly_payment_notification():
         print(f"❌ Ошибка при рассылке: {e}")
 
 
-async def add_vpn_client(user_info, auth_manager: AuthManager):
+async def add_vpn_client(user_info, auth_manager: AuthManager.AuthManager):
     if user_info.username:
         user_email = user_info.username
     else:
         user_email = f"user{user_info.id}"
     tg_id = user_info.id
-    client_uuid = str(uuid.uuid4())
-    sub_id = str(uuid.uuid4())
     new_client = {
-        "id": client_uuid,
-        "flow": "",
         "email": user_email,
         "limitIp": 5,
         "totalGB": 0,
         "expiryTime": 0,
         "enable": True,
         "tgId": str(tg_id),
-        "subId": sub_id
     }
 
     payload = {
-        "id": int(os.getenv("CONNECTION_ID")),
-        "settings": json.dumps({"clients": [new_client]})
+        "client": new_client,
+        "inboundIds": [int(os.getenv("CONNECTION_ID"))]
     }
-    result = await auth_manager.api_request("POST", "/panel/api/inbounds/addClient", json=payload)
+    result = await auth_manager.api_request("POST", "/panel/api/clients/add", json=payload)
     if result.get("success"):
-        print(f"Сгенерирован новый клиент VPN: {user_email}")
-        return client_uuid, sub_id, "Успешно создано"
+        client_info = await auth_manager.api_request("GET", f"/panel/api/clients/get/{quote(user_email, safe='')}")
+        if client_info.get("success") and client_info.get("obj"):
+            obj = client_info.get("obj", {})
+            client = obj.get("client", {}) if isinstance(obj, dict) else {}
+            created_uuid = client.get("uuid") or client.get("id")
+            created_sub_id = client.get("subId")
+            print(f"Сгенерирован новый клиент VPN: {user_email}")
+            return created_uuid, created_sub_id, "Успешно создано"
+        print("Клиент создан, но не удалось получить его детали через /clients/get")
+        return None, None, "Клиент создан, но детали не получены"
     else:
         print("Ошибка при добавлении клиента VPN:", result.get("msg", "Нет сообщения об ошибке"))
         return None, None, result.get("msg", "Ошибка API")
+
+
+async def get_client_by_email(email: str, auth_manager: AuthManager.AuthManager):
+    response = await auth_manager.api_request("GET", f"/panel/api/clients/get/{quote(email, safe='')}")
+    if not response.get("success"):
+        return None
+    obj = response.get("obj")
+    if not isinstance(obj, dict):
+        return obj
+    client = obj.get("client")
+    if isinstance(client, dict):
+        normalized = dict(client)
+        normalized["inboundIds"] = obj.get("inboundIds", [])
+        return normalized
+    return obj
+
+
+async def get_client_link_by_subid(sub_id: str, auth_manager: AuthManager.AuthManager):
+    response = await auth_manager.api_request(
+        "GET",
+        f"/panel/api/clients/subLinks/{quote(sub_id, safe='')}"
+    )
+    if not response.get("success"):
+        return None
+
+    links = response.get("obj")
+    if not isinstance(links, list) or not links:
+        return None
+
+    for link in links:
+        if isinstance(link, str) and link.startswith("vless://"):
+            return link
+    return links[0] if isinstance(links[0], str) else None
 
 
 @dp.message(CommandStart())
@@ -164,7 +198,7 @@ async def broadcast_command(message: types.Message, command: CommandObject):
         await message.answer("❌ Произошла ошибка при рассылке.")
 
 @dp.message(Command('create_token'))
-async def create_token(message: types.Message, auth_manager: AuthManager):
+async def create_token(message: types.Message, auth_manager: AuthManager.AuthManager):
     tg_id = message.from_user.id
     status = DBManager.is_user_approved(tg_id)
     if status is None or status < 1:
@@ -174,70 +208,38 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
     await message.answer("Получение токена, подождите...")
 
     try:
-        response = await auth_manager.api_request("GET", f"/panel/api/inbounds/get/{os.getenv('CONNECTION_ID')}")
-        if not response.get("success"):
-            raise Exception(f"API Error: {response.get('msg')}")
+        candidate_emails = [f"user{tg_id}"]
+        if message.from_user.username:
+            candidate_emails.insert(0, message.from_user.username) # fixme а если пользователь поменяет tg_username?
 
-        inbound_obj = response.get("obj")
-        settings = json.loads(inbound_obj.get("settings"))
+        existing_client = None
+        for candidate_email in candidate_emails:
+            existing_client = await get_client_by_email(candidate_email, auth_manager)
+            if existing_client:
+                break
 
         if status == 2:
-            existing_client = None
-            for client in settings.get("clients", []):
-                if str(client.get("tgId")) == str(tg_id):
-                    existing_client = client
-                    break
             if existing_client is None:
-                raise Exception("Клиент не найден, хотя статус 2. Это может быть ошибкой в базе данных.")
-            client_uuid = existing_client["id"]
+                raise Exception("Клиент не найден через `/panel/api/clients/get/{email}`. Проверьте, какой email был сохранён при создании.")
+            client_uuid = existing_client.get("uuid") or existing_client.get("id")
             sub_id = existing_client.get("subId", "")
-            email = existing_client["email"]
         else:
             client_uuid, sub_id, msg = await add_vpn_client(message.from_user, auth_manager)
-            if message.from_user.username:
-                email = message.from_user.username
-            else:
-                email = f"user{message.from_user.id}"
 
         if not client_uuid:
             await message.answer("❌ Ошибка при создании токена")
             return
 
-        stream_settings = json.loads(inbound_obj.get("streamSettings"))
-        net_type = stream_settings.get("network", "xhttp")
-        security = stream_settings.get("security", "none")
-        params = {
-            "type": net_type,
-            "security": security,
-            "encryption": "none"
-        }
-        if security == "reality":
-            reality_settings = stream_settings.get("realitySettings", {})
-            settings_inner = reality_settings.get("settings", {})
-            params["pbk"] = settings_inner.get("publicKey")
-            params["fp"] = settings_inner.get("fingerprint", "firefox")
-            sids = reality_settings.get("shortIds", [])
-            params["sid"] = sids[0]
-            server_names = reality_settings.get("serverNames", [])
-            params["sni"] = server_names[0]
-            params["spx"] = "/"
-            params["pqv"] = settings_inner.get("mldsa65Verify")
-        else:
-            raise Exception(f"Неизвестный тип безопасности: {response.get('msg')}")
-        if net_type == "xhttp":
-            xhttp = stream_settings.get("xhttpSettings", {})
-            params["path"] = xhttp.get("path", "/")
-            params["host"] = xhttp.get("host", "")
-            params["mode"] = xhttp.get("mode", "auto")
-        else:
-            raise Exception(f"Неизвестный тип сети: {response.get('msg')}")
+        vless_link = await get_client_link_by_subid(sub_id, auth_manager)
+        if not vless_link:
+            raise Exception("Не удалось получить ссылку клиента через /panel/api/clients/subLinks/{subId}")
 
-        query_string = urllib.parse.urlencode(params)
-        vless_link = f"vless://{client_uuid}@{os.getenv('SERVER_IP')}:{inbound_obj.get('port')}?{query_string}#{email}"
-        sub_link = f"http://{os.getenv('SERVER_IP')}:2096/sub/{sub_id}"
+
+
+        sub_link = f"{os.getenv('SUB_URL')}/{sub_id}"
         text = (
                 "✅ <b>Ваш персональный ключ создан!</b>\n" +
-                f"<a href='{sub_link}'>Проверить статус токена</a>\n\n" +
+                f"<a href='{sub_link}'>Проверить статус токена / получить токен для другого протокола</a>\n\n" +
                 "Ваш токен:\n" +
                 f"<pre>{vless_link}</pre>"
         )
@@ -284,25 +286,31 @@ async def help_cmd(message: types.Message):
 
 async def main():
     DBManager.init_db()
-    auth_manager = AuthManager.AuthManager(URL, os.getenv("PANEL_USERNAME"), os.getenv("PANEL_PASSWORD"))
+    auth_manager = AuthManager.AuthManager(
+        URL,
+        os.getenv("PANEL_USERNAME"),
+        os.getenv("PANEL_PASSWORD"),
+        api_token=os.getenv("PANEL_API_TOKEN", ""),
+        two_factor_code=os.getenv("PANEL_2FA_CODE", "")
+    )
     dp.message.middleware(Filter.BannedUserMiddleware())
     dp.callback_query.middleware(Filter.BannedUserMiddleware())
 
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        send_quarterly_payment_notification,
-        trigger='cron',
-        month='3,6,9,12',
-        day='5',
-        hour='12',
-        minute='00',
-    )
-    scheduler.start()
+    # scheduler = AsyncIOScheduler()
+    # scheduler.add_job(
+    #     send_quarterly_payment_notification,
+    #     trigger='cron',
+    #     month='3,6,9,12',
+    #     day='5',
+    #     hour='12',
+    #     minute='00',
+    # )
+    # scheduler.start()
     try:
         await dp.start_polling(bot, auth_manager=auth_manager)
     finally:
         print("Выключение бота...")
-        scheduler.shutdown()
+        # scheduler.shutdown()
         DBManager.close_db()
         await auth_manager.close()
         print("Работа бота завершена.")
