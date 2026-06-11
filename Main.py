@@ -1,5 +1,9 @@
 import asyncio
+import json
 import os
+import secrets
+import string
+import uuid
 from urllib.parse import quote
 
 import Filter
@@ -24,6 +28,19 @@ dp["auth_manager"] = None
 class AdminAction(CallbackData, prefix="admin"):
     action: str
     user_id: int
+
+
+def get_user_emails(user_info) -> list[str]:
+    emails = []
+    if user_info.username:
+        emails.append(user_info.username)
+    emails.append(f"user{user_info.id}")
+    return emails
+
+
+def generate_sub_id(length: int = 16) -> str:
+    alphabet = string.ascii_lowercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 async def send_quarterly_payment_notification():
@@ -54,39 +71,101 @@ async def send_quarterly_payment_notification():
 
 
 async def add_vpn_client(user_info, auth_manager: AuthManager.AuthManager):
-    if user_info.username:
-        user_email = user_info.username
-    else:
-        user_email = f"user{user_info.id}"
+    user_email = get_user_emails(user_info)[0]
     tg_id = user_info.id
+    client_uuid = str(uuid.uuid4())
+    sub_id = generate_sub_id()
     new_client = {
+        "id": client_uuid,
+        "uuid": client_uuid,
         "email": user_email,
         "limitIp": 5,
         "totalGB": 0,
         "expiryTime": 0,
         "enable": True,
-        "tgId": str(tg_id),
+        "tgId": tg_id,
+        "subId": sub_id,
+        "reset": 0,
     }
 
     payload = {
         "client": new_client,
         "inboundIds": [int(os.getenv("CONNECTION_ID"))]
     }
-    result = await auth_manager.api_request("POST", "/panel/api/clients/add", json=payload)
+    connection_id = int(os.getenv("CONNECTION_ID"))
+    legacy_payload = {
+        "id": connection_id,
+        "settings": json.dumps({"clients": [new_client]})
+    }
+    add_attempts = [
+        ("/panel/api/clients/add", {"json": payload}),
+        ("/panel/api/inbounds/addClient", {"json": legacy_payload}),
+        (f"/panel/api/inbounds/addClient/{connection_id}", {"json": legacy_payload}),
+        ("/xui/API/inbounds/addClient", {"json": legacy_payload}),
+        (f"/xui/API/inbounds/addClient/{connection_id}", {"json": legacy_payload}),
+    ]
+
+    result = {"success": False, "msg": "Не удалось добавить клиента"}
+    for endpoint, kwargs in add_attempts:
+        result = await auth_manager.api_request("POST", endpoint, **kwargs)
+        msg = result.get("msg", "Ошибка API")
+        if result.get("success"):
+            break
+        if "404 Not Found" in msg:
+            print(f"Endpoint {endpoint} недоступен, пробуем следующий вариант")
+            continue
+        break
+
     if result.get("success"):
-        client_info = await auth_manager.api_request("GET", f"/panel/api/clients/get/{quote(user_email, safe='')}")
-        if client_info.get("success") and client_info.get("obj"):
-            obj = client_info.get("obj", {})
-            client = obj.get("client", {}) if isinstance(obj, dict) else {}
-            created_uuid = client.get("uuid") or client.get("id")
-            created_sub_id = client.get("subId")
-            print(f"Сгенерирован новый клиент VPN: {user_email}")
-            return created_uuid, created_sub_id, "Успешно создано"
-        print("Клиент создан, но не удалось получить его детали через /clients/get")
-        return None, None, "Клиент создан, но детали не получены"
+        for attempt in range(5):
+            created_client = await get_client_by_email(user_email, auth_manager)
+            if created_client:
+                created_uuid = created_client.get("uuid") or created_client.get("id")
+                created_sub_id = created_client.get("subId")
+                if created_uuid and created_sub_id:
+                    print(f"Сгенерирован новый клиент VPN: {user_email}")
+                    return created_uuid, created_sub_id, "Успешно создано"
+
+            if attempt < 4:
+                await asyncio.sleep(0.5)
+
+        print(f"Клиент {user_email} создан, но не удалось проверить его через /clients/get; используем сгенерированные uuid/subId")
+        return client_uuid, sub_id, "Успешно создано"
     else:
-        print("Ошибка при добавлении клиента VPN:", result.get("msg", "Нет сообщения об ошибке"))
-        return None, None, result.get("msg", "Ошибка API")
+        if "already" in msg.lower() or "duplicate" in msg.lower() or "exist" in msg.lower():
+            existing_client = await get_client_by_email(user_email, auth_manager)
+            if existing_client:
+                created_uuid = existing_client.get("uuid") or existing_client.get("id")
+                created_sub_id = existing_client.get("subId")
+                if created_uuid and created_sub_id:
+                    print(f"Клиент VPN уже существует, используем его: {user_email}")
+                    return created_uuid, created_sub_id, "Клиент уже существовал"
+
+        print("Ошибка при добавлении клиента VPN:", msg)
+        return None, None, msg
+
+
+async def resolve_existing_client(user_info, auth_manager: AuthManager.AuthManager):
+    for candidate_email in get_user_emails(user_info):
+        existing_client = await get_client_by_email(candidate_email, auth_manager)
+        if existing_client:
+            return existing_client
+    return None
+
+
+async def get_client_credentials(user_info, auth_manager: AuthManager.AuthManager):
+    existing_client = await resolve_existing_client(user_info, auth_manager)
+    if existing_client:
+        client_uuid = existing_client.get("uuid") or existing_client.get("id")
+        sub_id = existing_client.get("subId", "")
+        if client_uuid and sub_id:
+            return client_uuid, sub_id
+        print(f"Клиент найден, но не хватает uuid/subId: {existing_client}")
+
+    client_uuid, sub_id, msg = await add_vpn_client(user_info, auth_manager)
+    if not client_uuid or not sub_id:
+        raise Exception(msg)
+    return client_uuid, sub_id
 
 
 async def get_client_by_email(email: str, auth_manager: AuthManager.AuthManager):
@@ -208,27 +287,7 @@ async def create_token(message: types.Message, auth_manager: AuthManager.AuthMan
     await message.answer("Получение токена, подождите...")
 
     try:
-        candidate_emails = [f"user{tg_id}"]
-        if message.from_user.username:
-            candidate_emails.insert(0, message.from_user.username) # fixme а если пользователь поменяет tg_username?
-
-        existing_client = None
-        for candidate_email in candidate_emails:
-            existing_client = await get_client_by_email(candidate_email, auth_manager)
-            if existing_client:
-                break
-
-        if status == 2:
-            if existing_client is None:
-                raise Exception("Клиент не найден через `/panel/api/clients/get/{email}`. Проверьте, какой email был сохранён при создании.")
-            client_uuid = existing_client.get("uuid") or existing_client.get("id")
-            sub_id = existing_client.get("subId", "")
-        else:
-            client_uuid, sub_id, msg = await add_vpn_client(message.from_user, auth_manager)
-
-        if not client_uuid:
-            await message.answer("❌ Ошибка при создании токена")
-            return
+        client_uuid, sub_id = await get_client_credentials(message.from_user, auth_manager)
 
         vless_link = await get_client_link_by_subid(sub_id, auth_manager)
         if not vless_link:

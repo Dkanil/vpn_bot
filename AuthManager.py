@@ -1,3 +1,5 @@
+import json
+
 import aiohttp
 from urllib.parse import urlsplit
 
@@ -20,6 +22,7 @@ class AuthManager:
         self.password = password
         self.api_token = (api_token or "").strip()
         self.two_factor_code = two_factor_code or ""
+        self.csrf_token = ""
         self.session = None
 
         self._initialized = True
@@ -83,7 +86,10 @@ class AuthManager:
                     print(f"AuthManager: Некорректный JSON при входе: {body[:300]}")
                     return False
                 print("Результат авторизации:", result)
-                return result.get("success", False)
+                is_success = result.get("success", False)
+                if is_success and csrf_token:
+                    self.csrf_token = csrf_token
+                return is_success
 
         ok = await login_once(use_json=True)
         if ok:
@@ -120,34 +126,42 @@ class AuthManager:
     async def api_request(self, method: str, endpoint: str, **kwargs) -> dict:
         session = await self.get_session()
         full_url = f"{self.url}{endpoint}"
-        is_panel_api_endpoint = endpoint.startswith("/panel/api/")
 
-        async def make_request():
+        async def make_request(treat_empty_404_as_auth: bool):
             print(f"Запрос {method} -> {endpoint}")
             if method == "GET":
                 response = session.get(full_url, **kwargs)
             else:
-                response = session.post(full_url, **kwargs)
+                request_kwargs = dict(kwargs)
+                headers = dict(request_kwargs.pop("headers", {}) or {})
+                if self.csrf_token:
+                    headers["X-CSRF-Token"] = self.csrf_token
+                if headers:
+                    request_kwargs["headers"] = headers
+                response = session.post(full_url, **request_kwargs)
             async with response as resp:
+                body = await resp.text()
                 if resp.status == 404:
-                    if is_panel_api_endpoint:
+                    print(f"AuthManager: 404 для {full_url}, тело: {body[:300]}")
+                    if treat_empty_404_as_auth and not body.strip():
                         return {"success": False, "msg": "AUTH_REQUIRED"}
                     return {"success": False, "msg": f"404 Not Found (проверьте URL): {full_url}"}
                 if resp.status in (401, 403):
+                    print(f"AuthManager: {resp.status} для {full_url}, тело: {body[:300]}")
                     return {"success": False, "msg": "AUTH_REQUIRED"}
                 try:
-                    return await resp.json()
+                    return json.loads(body)
                 except:
                     return {"success": False, "msg": "AUTH_REQUIRED"}
 
         try:
-            result = await make_request()
+            result = await make_request(treat_empty_404_as_auth=True)
             if not result.get("success") and self._is_auth_error(result):
                 print("AuthManager: Похоже, сессия истекла или её нет. Пробуем авторизоваться...")
                 is_logged = await self.login()
                 if not is_logged:
                     return {"success": False, "msg": "Ошибка авторизации в панели"}
-                result = await make_request()
+                result = await make_request(treat_empty_404_as_auth=False)
             return result
         except Exception as e:
             return {"success": False, "msg": f"Ошибка соединения с панелью: {e}"}
