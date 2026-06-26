@@ -104,7 +104,7 @@ def extend_payment(tg_id, months=3):
         return False
 
     now = int(time.time())
-    base_date = max(res[0], now) if res[0] else now
+    base_date = res[0] if res[0] else now
     new_paid_until = base_date + (months * 30 * 24 * 3600)
 
     cursor.execute('UPDATE users SET paid_until = ?, notify_level = 0 WHERE tg_id = ?', (new_paid_until, tg_id))
