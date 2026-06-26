@@ -1,7 +1,5 @@
 import json
-
 import aiohttp
-from urllib.parse import urlsplit
 
 
 class AuthManager:
@@ -13,155 +11,63 @@ class AuthManager:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, url, username, password, api_token=None, two_factor_code=""):
+    def __init__(self, url: str, api_token: str):
         if self._initialized:
             return
 
-        self.url = url
-        self.username = username
-        self.password = password
-        self.api_token = (api_token or "").strip()
-        self.two_factor_code = two_factor_code or ""
-        self.csrf_token = ""
+        self.url = url.rstrip('/')
+        self.api_token = api_token.strip()
         self.session = None
 
         self._initialized = True
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            jar = aiohttp.CookieJar(unsafe=True)
             headers = {
                 "Accept": "application/json",
-                "User-Agent": "vpnBot/1.0"
+                "User-Agent": "vpnBot/1.0",
+                "Authorization": f"Bearer {self.api_token}"
             }
-            if self.api_token:
-                headers["Authorization"] = f"Bearer {self.api_token}"
-            self.session = aiohttp.ClientSession(cookie_jar=jar, headers=headers)
+            self.session = aiohttp.ClientSession(headers=headers)
         return self.session
 
     async def close(self):
         if self.session and not self.session.closed:
             await self.session.close()
 
-    async def login(self) -> bool:
-        if self.api_token:
+    async def check_connection(self) -> bool:
+        res = await self.api_request("GET", "/panel/api/server/status")
+        if res.get("success"):
+            print("AuthManager: Успешно подключено к панели 3x-ui по API токену!")
             return True
-
-        session = await self.get_session()
-        login_data = {
-            "username": self.username,
-            "password": self.password,
-            "twoFactorCode": self.two_factor_code
-        }
-
-        parts = urlsplit(self.url)
-        origin = f"{parts.scheme}://{parts.netloc}"
-        login_url = f"{self.url}/login"
-        base_headers = {
-            "Referer": login_url,
-            "Origin": origin,
-            "X-Requested-With": "XMLHttpRequest"
-        }
-
-        # В некоторых сборках куки сессии выставляются только после GET /login.
-        try:
-            async with session.get(login_url, headers=base_headers):
-                pass
-        except Exception:
-            pass
-
-        async def login_once(use_json: bool, csrf_token: str = ""):
-            kwargs = {"json": login_data} if use_json else {"data": login_data}
-            headers = dict(base_headers)
-            if csrf_token:
-                headers["X-CSRF-Token"] = csrf_token
-            async with session.post(login_url, headers=headers, **kwargs) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    print(f"AuthManager: Ошибка входа, статус {resp.status}, тело: {body[:300]}")
-                    return False
-                try:
-                    result = await resp.json(content_type=None)
-                except Exception:
-                    print(f"AuthManager: Некорректный JSON при входе: {body[:300]}")
-                    return False
-                print("Результат авторизации:", result)
-                is_success = result.get("success", False)
-                if is_success and csrf_token:
-                    self.csrf_token = csrf_token
-                return is_success
-
-        ok = await login_once(use_json=True)
-        if ok:
-            return True
-
-        ok = await login_once(use_json=False)
-        if ok:
-            return True
-
-        # CSRF fallback для панелей с жёсткой проверкой middleware.
-        csrf_token = ""
-        try:
-            async with session.get(f"{self.url}/csrf-token", headers=base_headers) as csrf_resp:
-                csrf_json = await csrf_resp.json(content_type=None)
-                if isinstance(csrf_json, dict):
-                    csrf_token = csrf_json.get("obj") or ""
-        except Exception:
-            csrf_token = ""
-
-        if not csrf_token:
+        else:
+            print("AuthManager: Ошибка подключения. Проверьте URL и API_TOKEN.")
             return False
-
-        ok = await login_once(use_json=True, csrf_token=csrf_token)
-        if ok:
-            return True
-        return await login_once(use_json=False, csrf_token=csrf_token)
-
-    @staticmethod
-    def _is_auth_error(result: dict) -> bool:
-        msg = str(result.get("msg", "")).upper()
-        auth_markers = ("AUTH_REQUIRED", "UNAUTHORIZED", "FORBIDDEN", "LOGIN")
-        return any(marker in msg for marker in auth_markers)
 
     async def api_request(self, method: str, endpoint: str, **kwargs) -> dict:
         session = await self.get_session()
         full_url = f"{self.url}{endpoint}"
 
-        async def make_request(treat_empty_404_as_auth: bool):
-            print(f"Запрос {method} -> {endpoint}")
-            if method == "GET":
-                response = session.get(full_url, **kwargs)
-            else:
-                request_kwargs = dict(kwargs)
-                headers = dict(request_kwargs.pop("headers", {}) or {})
-                if self.csrf_token:
-                    headers["X-CSRF-Token"] = self.csrf_token
-                if headers:
-                    request_kwargs["headers"] = headers
-                response = session.post(full_url, **request_kwargs)
-            async with response as resp:
-                body = await resp.text()
-                if resp.status == 404:
-                    print(f"AuthManager: 404 для {full_url}, тело: {body[:300]}")
-                    if treat_empty_404_as_auth and not body.strip():
-                        return {"success": False, "msg": "AUTH_REQUIRED"}
-                    return {"success": False, "msg": f"404 Not Found (проверьте URL): {full_url}"}
-                if resp.status in (401, 403):
-                    print(f"AuthManager: {resp.status} для {full_url}, тело: {body[:300]}")
-                    return {"success": False, "msg": "AUTH_REQUIRED"}
-                try:
-                    return json.loads(body)
-                except:
-                    return {"success": False, "msg": "AUTH_REQUIRED"}
+        print(f"Запрос {method} -> {endpoint}")
 
         try:
-            result = await make_request(treat_empty_404_as_auth=True)
-            if not result.get("success") and self._is_auth_error(result):
-                print("AuthManager: Похоже, сессия истекла или её нет. Пробуем авторизоваться...")
-                is_logged = await self.login()
-                if not is_logged:
-                    return {"success": False, "msg": "Ошибка авторизации в панели"}
-                result = await make_request(treat_empty_404_as_auth=False)
-            return result
+            async with session.request(method, full_url, **kwargs) as resp:
+                body = await resp.text()
+
+                if resp.status in (401, 403):
+                    print(f"AuthManager: {resp.status} Ошибка доступа. Токен недействителен! Тело: {body[:100]}")
+                    return {"success": False, "msg": "AUTH_REQUIRED"}
+
+                if resp.status == 404:
+                    print(f"AuthManager: 404 Not Found для {full_url}")
+                    return {"success": False, "msg": f"404 Not Found: {full_url}"}
+
+                try:
+                    return json.loads(body)
+                except json.JSONDecodeError:
+                    print(f"AuthManager: Сервер вернул не JSON: {body[:200]}")
+                    return {"success": False, "msg": "INVALID_JSON_RESPONSE"}
+
         except Exception as e:
-            return {"success": False, "msg": f"Ошибка соединения с панелью: {e}"}
+            print(f"AuthManager: Ошибка соединения с панелью: {e}")
+            return {"success": False, "msg": f"CONNECTION_ERROR: {e}"}

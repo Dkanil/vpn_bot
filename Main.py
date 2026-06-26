@@ -18,7 +18,6 @@ from aiogram.filters.callback_data import CallbackData
 
 load_dotenv()
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-URL = os.getenv("URL")
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 SUB_URL = os.environ.get("SUB_URL", "")
 dp = Dispatcher()
@@ -346,12 +345,11 @@ async def help_cmd(message: types.Message):
 async def main():
     DBManager.init_db()
     auth_manager = AuthManager.AuthManager(
-        URL,
-        os.getenv("PANEL_USERNAME"),
-        os.getenv("PANEL_PASSWORD"),
-        api_token=os.getenv("PANEL_API_TOKEN", ""),
-        two_factor_code=os.getenv("PANEL_2FA_CODE", "")
+        url=os.getenv("URL"),
+        api_token=os.getenv("API_TOKEN", ""),
     )
+    await auth_manager.check_connection()
+
     dp.message.middleware(Filter.BannedUserMiddleware())
     dp.callback_query.middleware(Filter.BannedUserMiddleware())
 
