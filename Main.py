@@ -2,17 +2,21 @@ import asyncio
 import os
 import secrets
 import string
+import time
 from urllib.parse import quote
 
 import Filter
 import DBManager
 from AuthManager import AuthManager
+
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 
 load_dotenv()
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -20,6 +24,10 @@ bot = Bot(token=os.getenv("BOT_TOKEN"))
 SUB_URL = os.environ.get("SUB_URL", "")
 dp = Dispatcher()
 dp["auth_manager"] = None
+
+
+class BroadcastState(StatesGroup):
+    waiting_for_payment_message = State()
 
 
 class AdminAction(CallbackData, prefix="admin"):
@@ -40,31 +48,166 @@ def generate_sub_id(length: int = 16) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-async def send_quarterly_payment_notification():
-    print("----- Запуск рассылки об оплате... -----")
-    try:
-        users = DBManager.get_vpn_users()
-        text = (
-            "🔔 <b>Напоминание об оплате VPN</b>\n\n"
-            "Пожалуйста, оплатите подписку на следующие 3 месяца.\n\n"
-            "ℹ️ <i>Реквизиты для оплаты:</i>\n"
-            f"По номеру телефона: {os.getenv('PAYMENT')}\n"
-        )
+async def sync_all_users_from_panel(auth_manager: AuthManager):
+    res = await auth_manager.api_request("GET", "/panel/api/clients/list")
+    if not res.get("success"):
+        return
 
-        count = 0
-        for user_id in users:
-            try:
-                await bot.send_message(user_id, text, parse_mode=ParseMode.HTML)
-                count += 1
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                print(f"Не удалось отправить юзеру {user_id}: {e}")
+    clients = res.get("obj", [])
+    now = int(time.time())
 
-        print(f"✅ Рассылка завершена. Отправлено: {count}")
-        await bot.send_message(ADMIN_ID, f"📢 Автоматическая рассылка проведена.\nДоставлено сообщений: {count}")
+    for c in clients:
+        tg_id_raw = c.get("tgId")
+        email = c.get("email")
+        if not tg_id_raw or not email:
+            continue
 
-    except Exception as e:
-        print(f"❌ Ошибка при рассылке: {e}")
+        try:
+            tg_id = int(tg_id_raw)
+        except ValueError:
+            continue
+
+        created = c.get("createdAt") or (now * 1000)
+        c_date = int(created) // 1000
+        p_until = c_date + (90 * 24 * 3600)
+        group = c.get("group") or c.get("group_name") or ""
+
+        DBManager.update_user_from_panel(tg_id, c_date, p_until, group, email)
+
+
+async def send_admin_individual_notification(tg_id, status_text):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Сделать рассылку должникам", callback_data="admin_broadcast_payment")]
+    ])
+    text = (
+        f"🔔 <b>Подошел срок оплаты!</b>\n\n"
+        f"👤 <b>Пользователь:</b> <a href='tg://user?id={tg_id}'>{tg_id}</a>\n"
+        f"📊 <b>Статус:</b> {status_text}\n\n"
+        f"Хотите отправить рассылку с напоминанием?"
+    )
+    await bot.send_message(ADMIN_ID, text, parse_mode="HTML", reply_markup=kb)
+
+
+async def background_payment_check(auth_manager: AuthManager):
+    while True:
+        try:
+            await sync_all_users_from_panel(auth_manager)
+            users = DBManager.get_users_for_payment_check()
+            now = int(time.time())
+
+            for tg_id, paid_until, notify_level in users:
+                if not paid_until:
+                    continue
+
+                left_seconds = paid_until - now
+
+                if left_seconds <= 0 and notify_level < 2:
+                    DBManager.set_notify_level(tg_id, 2)
+                    await send_admin_individual_notification(tg_id, "🔴 ПРОСРОЧЕНО (< 0 дней)")
+
+                elif 0 < left_seconds <= 7 * 24 * 3600 and notify_level < 1:
+                    DBManager.set_notify_level(tg_id, 1)
+                    await send_admin_individual_notification(tg_id, "🟡 ИСТЕКАЕТ (< 7 дней)")
+
+                elif left_seconds > 7 * 24 * 3600 and notify_level > 0:
+                    DBManager.set_notify_level(tg_id, 0)
+
+        except Exception as e:
+            print(f"Ошибка в background_payment_check: {e}")
+
+        await asyncio.sleep(24 * 3600)
+
+
+@dp.message(Command('paid'))
+async def mark_paid_cmd(message: types.Message, command: CommandObject):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = command.args
+    if not args:
+        await message.answer(
+            "Использование: /paid <tg_id> [кол-во месяцев (по умолчанию 3)]\nПример: /paid 123456789 3")
+        return
+
+    parts = args.split()
+    tg_id = int(parts[0])
+    months = int(parts[1]) if len(parts) > 1 else 3
+
+    if DBManager.extend_payment(tg_id, months):
+        await message.answer(f"✅ Подписка для юзера <code>{tg_id}</code> продлена на {months} мес.", parse_mode="HTML")
+        try:
+            await bot.send_message(tg_id,
+                                   f"🎉 <b>Спасибо за оплату!</b>\nВаша подписка на VPN успешно продлена на {months} мес.",
+                                   parse_mode="HTML")
+        except Exception:
+            await message.answer("⚠️ Подписка продлена, но юзер заблокировал бота.")
+    else:
+        await message.answer("❌ Пользователь не найден.")
+
+
+@dp.message(Command('status'))
+async def status_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    status_1, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
+    text = (
+        "📊 <b>Статус оплат (без учета группы private):</b>\n\n"
+        f"🟢 <b>Оплачено:</b> {len(status_1)} чел.\n"
+        f"🟡 <b>Истекает (менее 7 дней):</b> {len(status_0)} чел.\n"
+        f"🔴 <b>Просрочено:</b> {len(status_minus_1)} чел.\n\n"
+        "Для продления подписки: <code>/paid &lt;tg_id&gt; [мес]</code>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Написать должникам", callback_data="admin_broadcast_payment")]
+    ])
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+
+@dp.callback_query(F.data == "admin_broadcast_payment")
+async def ask_payment_message(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id != ADMIN_ID:
+        return
+    await call.message.answer(
+        "📝 <b>Введите текст сообщения.</b>\n"
+        "Оно будет отправлено всем, у кого статус оплаты 🟡 и 🔴 (исключая группу private).\n\n"
+        "<i>Для отмены введите /cancel</i>", parse_mode="HTML"
+    )
+    await state.set_state(BroadcastState.waiting_for_payment_message)
+    await call.answer()
+
+
+@dp.message(Command("cancel"))
+async def cancel_fsm(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None:
+        await state.clear()
+        await message.answer("Действие отменено.")
+
+
+@dp.message(BroadcastState.waiting_for_payment_message)
+async def send_payment_message(message: types.Message, state: FSMContext):
+    text = message.text
+    _, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
+    targets = status_0 + status_minus_1
+
+    if not targets:
+        await message.answer("Никто не должен оплату. Рассылка отменена.")
+        await state.clear()
+        return
+
+    await message.answer(f"⏳ Начинаю рассылку для {len(targets)} пользователей...")
+    count = 0
+    for tg_id in targets:
+        try:
+            await bot.send_message(tg_id, text, parse_mode="HTML")
+            count += 1
+            await asyncio.sleep(0.1)
+        except Exception:
+            pass
+
+    await message.answer(f"✅ Рассылка завершена. Успешно доставлено: {count} из {len(targets)}")
+    await state.clear()
 
 
 async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: list[int]):
@@ -92,11 +235,13 @@ async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: 
 
     if result.get("success"):
         print(f"Сгенерирован новый клиент VPN: {user_email} (inbounds: {target_inbounds})")
+        DBManager.update_user_email(tg_id, user_email)
         return sub_id, "Успешно создано"
 
     if "email already in use" in msg.lower():
         existing_client = await get_client_by_email(user_email, auth_manager)
         if existing_client and existing_client.get("subId"):
+            DBManager.update_user_email(tg_id, user_email)
             return existing_client.get("subId"), "Клиент уже существовал"
 
     print(f"Ошибка при добавлении клиента VPN {user_email}: {msg}")
@@ -104,10 +249,21 @@ async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: 
 
 
 async def resolve_existing_client(user_info, auth_manager: AuthManager):
-    for candidate_email in get_user_emails(user_info):
-        existing_client = await get_client_by_email(candidate_email, auth_manager)
-        if existing_client:
-            return existing_client
+    tg_id = user_info.id
+    saved_email = DBManager.get_user_email(tg_id)
+    if saved_email:
+        client = await get_client_by_email(saved_email, auth_manager)
+        if client:
+            return client
+
+    legacy_emails = get_user_emails(user_info)
+    for candidate_email in legacy_emails:
+        client = await get_client_by_email(candidate_email, auth_manager)
+        if client:
+            actual_email = client.get("email") or candidate_email
+            DBManager.update_user_email(tg_id, actual_email)
+            print(f"Локально зафиксирован email '{actual_email}' для юзера {tg_id}")
+            return client
     return None
 
 
@@ -310,22 +466,12 @@ async def main():
 
     dp.message.middleware(Filter.BannedUserMiddleware())
     dp.callback_query.middleware(Filter.BannedUserMiddleware())
+    asyncio.create_task(background_payment_check(auth_manager))
 
-    # scheduler = AsyncIOScheduler()
-    # scheduler.add_job(
-    #     send_quarterly_payment_notification,
-    #     trigger='cron',
-    #     month='3,6,9,12',
-    #     day='5',
-    #     hour='12',
-    #     minute='00',
-    # )
-    # scheduler.start()
     try:
         await dp.start_polling(bot, auth_manager=auth_manager)
     finally:
         print("Выключение бота...")
-        # scheduler.shutdown()
         DBManager.close_db()
         await auth_manager.close()
         print("Работа бота завершена.")
