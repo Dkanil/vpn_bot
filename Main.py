@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command, CommandObject
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -164,7 +164,6 @@ async def status_cmd(message: types.Message):
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
-
 @dp.callback_query(F.data == "admin_broadcast_payment")
 async def ask_payment_message(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID:
@@ -208,6 +207,30 @@ async def send_payment_message(message: types.Message, state: FSMContext):
 
     await message.answer(f"✅ Рассылка завершена. Успешно доставлено: {count} из {len(targets)}")
     await state.clear()
+
+
+@dp.message(Command('getdb'))
+async def get_db_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    db_path = "users.db"
+
+    if not os.path.exists(db_path):
+        await message.reply("❌ Файл базы данных <code>users.db</code> не найден на сервере.", parse_mode="HTML")
+        return
+
+    try:
+        db_file = FSInputFile(db_path, filename="users.db")
+
+        await message.reply_document(
+            document=db_file,
+            caption="📦 <b>Резервная копия локальной базы данных бота</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Ошибка при отправке базы данных: {e}")
+        await message.reply(f"❌ Не удалось отправить файл базы данных. Ошибка: {e}")
 
 
 async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: list[int]):
@@ -445,11 +468,17 @@ async def help_cmd(message: types.Message):
 3️⃣ Скопировать полученную ссылку подписки и добавить её в клиент.
 📱 <b>На телефоне и macOS (V2Box):</b> 
 Перейдите на вкладку <i>«Конфигурации»</i> (снизу) ➔ Нажмите <b>«+»</b> (сверху) ➔ Выберите <i>«Добавить подписку»</i> ➔ Задайте любое имя в поле "Название" (например, <code>dan4ek VPN</code>) и вставьте скопированную ссылку подписки в поле URL.
-После добавления выберите любой работающий протокол и подключитесь.
+
+⚡ <b>Как запустить и выбрать рабочий протокол:</b> 
+После добавления подписки нажмите на кнопку <b>«Пинг»</b> (кнопка в правом верхнем углу «Пинг всех»). У каждого протокола в списке появится значение задержки в миллисекундах (например, <code>120 ms</code>). Выберите тот вариант, где пинг минимальный и горит зеленым цветом (просто нажмите на него), а затем нажмите подключиться.
 
 💻 <b>На компьютере (v2rayN):</b> 
 Откройте программу с правами администратора ➔ Нажмите <b>«+»</b> (сверху) ➔ Задайте любое имя в поле Remarks (например, <code>dan4ek VPN</code>) и вставьте скопированную ссылку подписки в поле URL ➔ Включите тумблер Enable update и установите в этой же строке значение 600. 
 Нажмите сверху <code>Subscription group</code> ➔ <code>Update subscription without proxy</code>. 
+
+⚡ <b>Как протестировать и выбрать сервер:</b> 
+Нажмите на кнопку оо значком молнии, либо спидометра. В столбце <i>«Delay»</i> (Задержка) появятся цифры в миллисекундах, а в столбце Speed текущая скорость. 
+Выберите любой рабочий сервер с наименьшим пингом (где отображаются цифры, а не -1) и наибольшей скоростью, кликните на него дважды, чтобы выбрать его. 
 В самом низу окна выберите <i>«Clear system proxy»</i> ➔ включите тумблер <i>«Enable Tun»</i>.
 
 4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали напрямую без VPN."""
