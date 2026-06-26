@@ -1,14 +1,12 @@
 import asyncio
-import json
 import os
 import secrets
 import string
-import uuid
 from urllib.parse import quote
 
 import Filter
 import DBManager
-import AuthManager
+from AuthManager import AuthManager
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -69,14 +67,11 @@ async def send_quarterly_payment_notification():
         print(f"❌ Ошибка при рассылке: {e}")
 
 
-async def add_vpn_client(user_info, auth_manager: AuthManager.AuthManager):
+async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: list[int]):
     user_email = get_user_emails(user_info)[0]
     tg_id = user_info.id
-    client_uuid = str(uuid.uuid4())
     sub_id = generate_sub_id()
     new_client = {
-        "id": client_uuid,
-        "uuid": client_uuid,
         "email": user_email,
         "limitIp": 5,
         "totalGB": 0,
@@ -89,62 +84,26 @@ async def add_vpn_client(user_info, auth_manager: AuthManager.AuthManager):
 
     payload = {
         "client": new_client,
-        "inboundIds": [int(os.getenv("CONNECTION_ID"))]
+        "inboundIds": target_inbounds
     }
-    connection_id = int(os.getenv("CONNECTION_ID"))
-    legacy_payload = {
-        "id": connection_id,
-        "settings": json.dumps({"clients": [new_client]})
-    }
-    add_attempts = [
-        ("/panel/api/clients/add", {"json": payload}),
-        ("/panel/api/inbounds/addClient", {"json": legacy_payload}),
-        (f"/panel/api/inbounds/addClient/{connection_id}", {"json": legacy_payload}),
-        ("/xui/API/inbounds/addClient", {"json": legacy_payload}),
-        (f"/xui/API/inbounds/addClient/{connection_id}", {"json": legacy_payload}),
-    ]
 
-    result = {"success": False, "msg": "Не удалось добавить клиента"}
-    for endpoint, kwargs in add_attempts:
-        result = await auth_manager.api_request("POST", endpoint, **kwargs)
-        msg = result.get("msg", "Ошибка API")
-        if result.get("success"):
-            break
-        if "404 Not Found" in msg:
-            print(f"Endpoint {endpoint} недоступен, пробуем следующий вариант")
-            continue
-        break
+    result = await auth_manager.api_request("POST", "/panel/api/clients/add", json=payload)
+    msg = result.get("msg", "Ошибка API")
 
     if result.get("success"):
-        for attempt in range(5):
-            created_client = await get_client_by_email(user_email, auth_manager)
-            if created_client:
-                created_uuid = created_client.get("uuid") or created_client.get("id")
-                created_sub_id = created_client.get("subId")
-                if created_uuid and created_sub_id:
-                    print(f"Сгенерирован новый клиент VPN: {user_email}")
-                    return created_uuid, created_sub_id, "Успешно создано"
+        print(f"Сгенерирован новый клиент VPN: {user_email} (inbounds: {target_inbounds})")
+        return sub_id, "Успешно создано"
 
-            if attempt < 4:
-                await asyncio.sleep(0.5)
+    if "email already in use" in msg.lower():
+        existing_client = await get_client_by_email(user_email, auth_manager)
+        if existing_client and existing_client.get("subId"):
+            return existing_client.get("subId"), "Клиент уже существовал"
 
-        print(f"Клиент {user_email} создан, но не удалось проверить его через /clients/get; используем сгенерированные uuid/subId")
-        return client_uuid, sub_id, "Успешно создано"
-    else:
-        if "already" in msg.lower() or "duplicate" in msg.lower() or "exist" in msg.lower():
-            existing_client = await get_client_by_email(user_email, auth_manager)
-            if existing_client:
-                created_uuid = existing_client.get("uuid") or existing_client.get("id")
-                created_sub_id = existing_client.get("subId")
-                if created_uuid and created_sub_id:
-                    print(f"Клиент VPN уже существует, используем его: {user_email}")
-                    return created_uuid, created_sub_id, "Клиент уже существовал"
-
-        print("Ошибка при добавлении клиента VPN:", msg)
-        return None, None, msg
+    print(f"Ошибка при добавлении клиента VPN {user_email}: {msg}")
+    return None, msg
 
 
-async def resolve_existing_client(user_info, auth_manager: AuthManager.AuthManager):
+async def resolve_existing_client(user_info, auth_manager: AuthManager):
     for candidate_email in get_user_emails(user_info):
         existing_client = await get_client_by_email(candidate_email, auth_manager)
         if existing_client:
@@ -152,22 +111,32 @@ async def resolve_existing_client(user_info, auth_manager: AuthManager.AuthManag
     return None
 
 
-async def get_client_credentials(user_info, auth_manager: AuthManager.AuthManager):
+async def get_client_credentials(user_info, auth_manager: AuthManager):
+    target_inbounds = [int(i.strip()) for i in os.getenv("INBOUND_IDS").split(",") if i.strip().isdigit()]
+
     existing_client = await resolve_existing_client(user_info, auth_manager)
     if existing_client:
-        client_uuid = existing_client.get("uuid") or existing_client.get("id")
         sub_id = existing_client.get("subId", "")
-        if client_uuid and sub_id:
-            return client_uuid, sub_id
-        print(f"Клиент найден, но не хватает uuid/subId: {existing_client}")
+        if sub_id:
+            existing_inbounds = existing_client.get("inboundIds", [])
+            missing_inbounds = list(set(target_inbounds) - set(existing_inbounds))
 
-    client_uuid, sub_id, msg = await add_vpn_client(user_info, auth_manager)
-    if not client_uuid or not sub_id:
+            if missing_inbounds:
+                print(f"Привязываем клиента {existing_client['email']} к новым протоколам: {missing_inbounds}")
+                await auth_manager.api_request(
+                    "POST",
+                    f"/panel/api/clients/{quote(existing_client['email'], safe='')}/attach",
+                    json={"inboundIds": missing_inbounds}
+                )
+            return sub_id
+
+    sub_id, msg = await add_vpn_client(user_info, auth_manager, target_inbounds)
+    if not sub_id:
         raise Exception(msg)
-    return client_uuid, sub_id
+    return sub_id
 
 
-async def get_client_by_email(email: str, auth_manager: AuthManager.AuthManager):
+async def get_client_by_email(email: str, auth_manager: AuthManager):
     response = await auth_manager.api_request("GET", f"/panel/api/clients/get/{quote(email, safe='')}")
     if not response.get("success"):
         return None
@@ -180,24 +149,6 @@ async def get_client_by_email(email: str, auth_manager: AuthManager.AuthManager)
         normalized["inboundIds"] = obj.get("inboundIds", [])
         return normalized
     return obj
-
-
-async def get_client_link_by_subid(sub_id: str, auth_manager: AuthManager.AuthManager):
-    response = await auth_manager.api_request(
-        "GET",
-        f"/panel/api/clients/subLinks/{quote(sub_id, safe='')}"
-    )
-    if not response.get("success"):
-        return None
-
-    links = response.get("obj")
-    if not isinstance(links, list) or not links:
-        return None
-
-    for link in links:
-        if isinstance(link, str) and link.startswith("vless://"):
-            return link
-    return links[0] if isinstance(links[0], str) else None
 
 
 @dp.message(CommandStart())
@@ -246,6 +197,7 @@ async def handle_admin_action(call: types.CallbackQuery, callback_data: AdminAct
         await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, "К сожалению, вам отказано в доступе.")
 
+
 @dp.message(Command('broadcast'))
 async def broadcast_command(message: types.Message, command: CommandObject):
     if message.from_user.id != ADMIN_ID:
@@ -275,37 +227,40 @@ async def broadcast_command(message: types.Message, command: CommandObject):
         print(f"Ошибка при рассылке: {e}")
         await message.answer("❌ Произошла ошибка при рассылке.")
 
+
 @dp.message(Command('create_token'))
-async def create_token(message: types.Message, auth_manager: AuthManager.AuthManager):
+async def create_token(message: types.Message, auth_manager: AuthManager):
     tg_id = message.from_user.id
     status = DBManager.is_user_approved(tg_id)
     if status is None or status < 1:
         await message.answer("У вас нет доступа.")
         return
 
-    await message.answer("Получение токена, подождите...")
+    msg = await message.answer("Получение токена, подождите...")
 
     try:
-        client_uuid, sub_id = await get_client_credentials(message.from_user, auth_manager)
+        sub_id = await get_client_credentials(message.from_user, auth_manager)
 
-        vless_link = await get_client_link_by_subid(sub_id, auth_manager)
-        if not vless_link:
-            raise Exception("Не удалось получить ссылку клиента через /panel/api/clients/subLinks/{subId}")
+        sub_url_base = os.getenv('SUB_URL', '').rstrip('/')
+        if not sub_url_base:
+            raise Exception("Не задана переменная SUB_URL в настройках сервера")
 
+        sub_link = f"{sub_url_base}/{sub_id}"
 
-
-        sub_link = f"{os.getenv('SUB_URL')}/{sub_id}"
         text = (
-                "✅ <b>Ваш персональный ключ создан!</b>\n" +
-                f"<a href='{sub_link}'>Проверить статус токена / получить токен для другого протокола</a>\n\n" +
-                "Ваш токен:\n" +
-                f"<pre>{vless_link}</pre>"
+            "✅ <b>Ваша персональная подписка готова!</b>\n\n"
+            "По этой ссылке ваше приложение автоматически загрузит все доступные протоколы.\n\n"
+            "🔗 <b>Ваша ссылка подписки:</b>\n"
+            f"<pre>{sub_link}</pre>\n\n"
+            "<i>Скопируйте её и добавьте в приложение (v2rayN, V2Box, Happ) через опцию <b>'Добавить подписку'</b></i>"
+            "Подробная инструкция по команде /help"
         )
         DBManager.add_user(tg_id, 2)
-        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+        await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
+
     except Exception as e:
         print(f"Ошибка при создании токена: {e}")
-        await message.answer("❌ Ошибка при создании токена")
+        await msg.edit_text("❌ Ошибка при создании токена")
 
 
 @dp.message(Command('help'))
@@ -315,13 +270,13 @@ async def help_cmd(message: types.Message):
         return
 
     await message.answer("""<b>Список доступных команд:</b>
-/create_token - получить VPN токен
+/create_token - получить ссылку на VPN подписку
 /help - помощь
 
 
 <b>Инструкция по установке:</b>
 
-1️⃣ Получить свой токен с помощью команды /create_token
+1️⃣ Получить свою персональную ссылку подписки с помощью команды /create_token
 
 2️⃣ Скачать и установить клиент для VPN:
     - <b>Windows:</b> <a href='https://v2rayn.2dust.link'>Скачать v2rayN</a> 
@@ -329,22 +284,25 @@ async def help_cmd(message: types.Message):
         Скачанный архив распаковать и запустить <code>v2rayN.exe</code>
         (Если с официального сайта грузит медленно, то можно скачать с GitHub тот же файл: <a href='https://github.com/2dust/v2rayN/releases'>GitHub</a>)
     - <b>Android:</b> <a href='https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box&hl=ru'>Скачать V2Box (Google Play)</a>
-    - <b>iPhone (iOS), macOs:</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
+    - <b>iPhone (iOS), macOS:</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
 
-3️⃣ Скопировать полученный токен и вставить его в клиент для подключения к VPN.
+3️⃣ Скопировать полученную ссылку подписки и добавить её в клиент.
 📱 <b>На телефоне и macOS (V2Box):</b> 
-Перейдите на вкладку <i>«Конфигурации»</i> (снизу) ➔ нажмите <b>«+»</b> (сверху) ➔ выберите <i>«Импортировать v2ray из буфера обмена»</i>.
+Перейдите на вкладку <i>«Конфигурации»</i> (снизу) ➔ Нажмите <b>«+»</b> (сверху) ➔ Выберите <i>«Добавить подписку»</i> ➔ Задайте любое имя в поле "Название" (например, <code>dan4ek VPN</code>) и вставьте скопированную ссылку подписки в поле URL.
+После добавления выберите любой работающий протокол и подключитесь.
 
 💻 <b>На компьютере (v2rayN):</b> 
-Откройте программу с правами администратора ➔ нажмите <code>Ctrl + V</code> в центре окна ➔ в самом низу окна выберите <i>«Clear system proxy»</i> ➔ включите тумблер <i>«Enable Tun»</i>.
+Откройте программу с правами администратора ➔ Нажмите <b>«+»</b> (сверху) ➔ Задайте любое имя в поле Remarks (например, <code>dan4ek VPN</code>) и вставьте скопированную ссылку подписки в поле URL ➔ Включите тумблер Enable update и установите в этой же строке значение 600. 
+Нажмите сверху <code>Subscription group</code> ➔ <code>Update subscription without proxy</code>. 
+В самом низу окна выберите <i>«Clear system proxy»</i> ➔ включите тумблер <i>«Enable Tun»</i>.
 
-4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали без VPN."""
+4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали напрямую без VPN."""
                          , parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
 async def main():
     DBManager.init_db()
-    auth_manager = AuthManager.AuthManager(
+    auth_manager = AuthManager(
         url=os.getenv("URL"),
         api_token=os.getenv("API_TOKEN", ""),
     )
