@@ -560,12 +560,18 @@ async def help_cmd(message: types.Message):
         await message.answer("У вас нет доступа.")
         return
 
-    await message.answer("""<b>Список доступных команд:</b>
+    base_text = """<b>Список доступных команд:</b>
 /create_token - получить ссылку на VPN подписку
-/help - помощь
+/help - помощь\n\n"""
 
+    admin_text = """🛠 <b>Команды администратора:</b>
+/status — статус оплат пользователей и запуск рассылки должникам
+/paid &lt;tg_id&gt; [мес] — продлить подписку пользователю (по умолч. 3 мес)
+/getdb — выгрузить резервную копию базы данных (users.db)
+/broadcast &lt;текст&gt; — массовая рассылка всем пользователям с активным VPN
+/cancel — отменить текущий ввод текста (для рассылки)\n\n"""
 
-<b>Инструкция по установке:</b>
+    instruction_text = """<b>Инструкция по установке:</b>
 
 1️⃣ Получить свою персональную ссылку подписки с помощью команды /create_token
 
@@ -594,8 +600,15 @@ async def help_cmd(message: types.Message):
 В самом низу окна выберите <i>«Clear system proxy»</i> ➔ включите тумблер <i>«Enable Tun»</i>.
 
 4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали напрямую без VPN."""
-                         , parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+    final_text = base_text
+
+    if message.from_user.id == ADMIN_ID:
+        final_text += admin_text
+
+    final_text += instruction_text
+
+    await message.answer(final_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def main():
     DBManager.init_db()
