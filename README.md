@@ -45,3 +45,53 @@
 | SUB_URL              | URL сервера подписок вашей панели (без слэша на конце)                                                    |
 | API_TOKEN            | API токен (пишется при первой установке панели, можно создать новый в настройки панели -> учётная запись) |
 | INBOUND_IDS          | ID протоколов VPN **через запятую без пробелов** для привязки клиентов                                    |
+
+### 2. Создание виртуального окружения и установка зависимостей
+```bash
+sudo apt install python3-venv -y
+python3 -m venv .venv
+source venv/bin/activate  # Для Linux/MacOS
+venv\Scripts\activate     # Для Windows
+pip install aiogram python-dotenv
+```
+
+### 3. Настройка автозапуска бота (Linux)
+Для удобства создаём директорию vpn_bot и помещаем туда все файлы бота. 
+
+Затем создаём сервис systemd для автозапуска бота при старте системы:
+```bash
+sudo vim /etc/systemd/system/vpn-bot.service
+```
+
+Заполните файл следующим содержимым:
+```text
+[Unit]
+Description=VPN_BOT_AUTORUN
+After=network.target
+
+[Service]
+ExecStart=/root/vpn_bot/.venv/bin/python3 /root/vpn_bot/Main.py
+WorkingDirectory=/root/vpn_bot/
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Обновите конфигурацию systemd и запустите сервис:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable vpn-bot
+sudo systemctl start vpn-bot
+```
+
+Проверить статус сервиса можно командой:
+```bash
+sudo systemctl status vpn-bot
+```
+
+Перезапустить сервис можно командой:
+```bash
+sudo systemctl restart vpn-bot
+```
