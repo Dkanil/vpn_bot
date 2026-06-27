@@ -3,6 +3,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message
 import DBManager
 
+
 class BannedUserMiddleware(BaseMiddleware):
     async def __call__(
             self,
@@ -11,6 +12,10 @@ class BannedUserMiddleware(BaseMiddleware):
             data: Dict[str, Any]
     ) -> Any:
         user = data.get("event_from_user")
+
+        if user:
+            DBManager.update_username(user.id, user.username)
+
         if not user or DBManager.is_user_approved(user.id) != -1:
             return await handler(event, data)
         if isinstance(event, Message):

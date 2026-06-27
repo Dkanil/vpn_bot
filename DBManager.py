@@ -20,7 +20,8 @@ def init_db():
         'paid_until': 'INTEGER',
         'group_name': 'TEXT',
         'notify_level': 'INTEGER DEFAULT 0',
-        'email': 'TEXT'
+        'email': 'TEXT',
+        'username': 'TEXT'
     }
     for col, col_type in columns_to_add.items():
         try:
@@ -37,6 +38,13 @@ def close_db():
         print("Database disconnected.")
     else:
         print("Database was not connected.")
+
+
+def update_username(tg_id, username):
+    if not cursor or not conn:
+        return
+    cursor.execute('UPDATE users SET username = ? WHERE tg_id = ?', (username, tg_id))
+    conn.commit()
 
 
 def is_user_approved(tg_id):
@@ -80,18 +88,18 @@ def get_all_vpn_users_full():
 
 def update_user_from_panel(tg_id, creation_date, paid_until, group_name, email=None):
     if email:
-        cursor.execute('''UPDATE users 
-                          SET creation_date = COALESCE(creation_date, ?), 
-                              paid_until = COALESCE(paid_until, ?), 
-                              group_name = ?,
-                              email = COALESCE(email, ?)
+        cursor.execute('''UPDATE users
+                          SET creation_date = COALESCE(creation_date, ?),
+                              paid_until    = COALESCE(paid_until, ?),
+                              group_name    = ?,
+                              email         = COALESCE(email, ?)
                           WHERE tg_id = ?''',
                        (creation_date, paid_until, group_name, email, tg_id))
     else:
-        cursor.execute('''UPDATE users 
-                          SET creation_date = COALESCE(creation_date, ?), 
-                              paid_until = COALESCE(paid_until, ?), 
-                              group_name = ? 
+        cursor.execute('''UPDATE users
+                          SET creation_date = COALESCE(creation_date, ?),
+                              paid_until    = COALESCE(paid_until, ?),
+                              group_name    = ?
                           WHERE tg_id = ?''',
                        (creation_date, paid_until, group_name, tg_id))
     conn.commit()
@@ -126,7 +134,7 @@ def get_users_for_payment_check():
 
 
 def get_users_by_payment_status():
-    cursor.execute('''SELECT tg_id, paid_until
+    cursor.execute('''SELECT tg_id, paid_until, username
                       FROM users
                       WHERE is_approved = 2
                         AND (group_name IS NULL OR group_name != 'private')''')
@@ -134,17 +142,18 @@ def get_users_by_payment_status():
     status_1, status_0, status_minus_1 = [], [], []
     now = int(time.time())
 
-    for tg_id, paid_until in rows:
+    for tg_id, paid_until, username in rows:
+        user_info = (tg_id, username)
         if not paid_until:
-            status_1.append(tg_id)
+            status_1.append(user_info)
             continue
 
         left_seconds = paid_until - now
         if left_seconds > 7 * 24 * 3600:
-            status_1.append(tg_id)
+            status_1.append(user_info)
         elif left_seconds > 0:
-            status_0.append(tg_id)
+            status_0.append(user_info)
         else:
-            status_minus_1.append(tg_id)
+            status_minus_1.append(user_info)
 
     return status_1, status_0, status_minus_1

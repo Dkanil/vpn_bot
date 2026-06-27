@@ -35,6 +35,11 @@ class AdminAction(CallbackData, prefix="admin"):
     user_id: int
 
 
+class PaymentAction(CallbackData, prefix="pay"):
+    action: str
+    user_id: int
+
+
 def get_user_emails(user_info) -> list[str]:
     emails = []
     if user_info.username:
@@ -103,11 +108,11 @@ async def background_payment_check(auth_manager: AuthManager):
 
                 if left_seconds <= 0 and notify_level < 2:
                     DBManager.set_notify_level(tg_id, 2)
-                    await send_admin_individual_notification(tg_id, "🔴 ПРОСРОЧЕНО (< 0 дней)")
+                    await send_admin_individual_notification(tg_id, "🔴 ПРОСРОЧЕНО (менее 0 дней)")
 
                 elif 0 < left_seconds <= 7 * 24 * 3600 and notify_level < 1:
                     DBManager.set_notify_level(tg_id, 1)
-                    await send_admin_individual_notification(tg_id, "🟡 ИСТЕКАЕТ (< 7 дней)")
+                    await send_admin_individual_notification(tg_id, "🟡 ИСТЕКАЕТ (менее 7 дней)")
 
                 elif left_seconds > 7 * 24 * 3600 and notify_level > 0:
                     DBManager.set_notify_level(tg_id, 0)
@@ -145,23 +150,118 @@ async def mark_paid_cmd(message: types.Message, command: CommandObject):
         await message.answer("❌ Пользователь не найден.")
 
 
+@dp.callback_query(F.data == "user_notified_payment")
+async def handle_user_payment_notify(call: types.CallbackQuery):
+    tg_id = call.from_user.id
+    username = call.from_user.username or "Без юзернейма"
+
+    await call.message.edit_text(
+        f"{call.message.text}\n\n⏳ <i>Заявка на проверку оплаты отправлена администратору. Ожидайте подтверждения.</i>",
+        parse_mode="HTML"
+    )
+
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвердить (3 мес)",
+                                 callback_data=PaymentAction(action="approve", user_id=tg_id).pack()),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=PaymentAction(action="reject", user_id=tg_id).pack())
+        ]
+    ])
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"💸 <b>Пользователь сообщил об оплате!</b>\n\n"
+        f"👤 <b>Пользователь:</b> <a href='tg://user?id={tg_id}'>{tg_id}</a>\n"
+        f"📧 <b>Юзернейм:</b> @{username}\n\n"
+        f"Подтвердить продление подписки на 3 месяца?",
+        parse_mode="HTML",
+        reply_markup=admin_kb
+    )
+    await call.answer()
+
+
+@dp.callback_query(PaymentAction.filter())
+async def handle_admin_payment_decision(call: types.CallbackQuery, callback_data: PaymentAction):
+    if call.from_user.id != ADMIN_ID:
+        return
+
+    target_id = callback_data.user_id
+
+    if callback_data.action == "approve":
+        if DBManager.extend_payment(target_id, 3):
+            await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА</b>", parse_mode="HTML")
+
+            try:
+                await bot.send_message(
+                    target_id,
+                    "🎉 <b>Спасибо за оплату!</b>\n Подписка на VPN успешно продлена на 3 месяца.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+        else:
+            await call.message.edit_text(f"{call.message.text}\n\n❌ Ошибка: Пользователь не найден в БД.",
+                                         parse_mode="HTML")
+
+    elif callback_data.action == "reject":
+        await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
+
+        try:
+            await bot.send_message(
+                target_id,
+                "❌ <b>Оплата не подтверждена.</b>\n Пожалуйста, проверьте статус перевода или свяжитесь с администратором (контакт в описании бота).",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    await call.answer()
+
+
 @dp.message(Command('status'))
-async def status_cmd(message: types.Message):
+async def status_cmd(message: types.Message, auth_manager: AuthManager):
     if message.from_user.id != ADMIN_ID:
         return
 
-    status_1, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
-    text = (
-        "📊 <b>Статус оплат (без учета группы private):</b>\n\n"
-        f"🟢 <b>Оплачено:</b> {len(status_1)} чел.\n"
-        f"🟡 <b>Истекает (менее 7 дней):</b> {len(status_0)} чел.\n"
-        f"🔴 <b>Просрочено:</b> {len(status_minus_1)} чел.\n\n"
-        "Для продления подписки: <code>/paid &lt;tg_id&gt; [мес]</code>"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Написать должникам", callback_data="admin_broadcast_payment")]
-    ])
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    status_msg = await message.answer("🔄 Синхронизирую данные с панелью, подождите...")
+
+    try:
+        await sync_all_users_from_panel(auth_manager)
+
+        status_1, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
+
+        def format_users(users):
+            if not users:
+                return "   <i>Пусто</i>\n"
+            res = ""
+            for tg_id, username in users:
+                un = f" - @{username}" if username else ""
+                res += f"   ├ <code>{tg_id}</code>{un}\n"
+            return res
+
+        text = (
+            "📊 <b>Статус оплат (без учета группы private):</b>\n\n"
+            f"🟢 <b>Оплачено ({len(status_1)} чел.):</b>\n"
+            f"{format_users(status_1)}\n"
+            f"🟡 <b>Истекает менее 7 дней ({len(status_0)} чел.):</b>\n"
+            f"{format_users(status_0)}\n"
+            f"🔴 <b>Просрочено ({len(status_minus_1)} чел.):</b>\n"
+            f"{format_users(status_minus_1)}\n"
+            "Для продления: <code>/paid &lt;tg_id&gt; [мес]</code>"
+        )
+
+        if len(text) > 4000:
+            text = text[:4000] + "...\n\n<i>(Список обрезан из-за лимита длины Telegram)</i>"
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Написать должникам", callback_data="admin_broadcast_payment")]
+        ])
+
+        await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+    except Exception as e:
+        print(f"Ошибка при обработке /status: {e}")
+        await status_msg.edit_text("❌ Произошла ошибка при обновлении данных из панели.")
 
 
 @dp.callback_query(F.data == "admin_broadcast_payment")
@@ -188,7 +288,8 @@ async def cancel_fsm(message: types.Message, state: FSMContext):
 async def send_payment_message(message: types.Message, state: FSMContext):
     text = message.text
     _, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
-    targets = status_0 + status_minus_1
+
+    targets = [u[0] for u in status_0 + status_minus_1]
 
     if not targets:
         await message.answer("Никто не должен оплату. Рассылка отменена.")
@@ -197,9 +298,14 @@ async def send_payment_message(message: types.Message, state: FSMContext):
 
     await message.answer(f"⏳ Начинаю рассылку для {len(targets)} пользователей...")
     count = 0
+
+    user_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Я оплатил", callback_data="user_notified_payment")]
+    ])
+
     for tg_id in targets:
         try:
-            await bot.send_message(tg_id, text, parse_mode="HTML")
+            await bot.send_message(tg_id, text, parse_mode="HTML", reply_markup=user_kb)
             count += 1
             await asyncio.sleep(0.1)
         except Exception:
