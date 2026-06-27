@@ -126,7 +126,7 @@ def set_notify_level(tg_id, level):
 
 
 def get_users_for_payment_check():
-    cursor.execute('''SELECT tg_id, paid_until, notify_level
+    cursor.execute('''SELECT tg_id, paid_until, notify_level, username, email
                       FROM users
                       WHERE is_approved = 2
                         AND (group_name IS NULL OR group_name != 'private')''')
@@ -134,7 +134,7 @@ def get_users_for_payment_check():
 
 
 def get_users_by_payment_status():
-    cursor.execute('''SELECT tg_id, paid_until, username
+    cursor.execute('''SELECT tg_id, paid_until, username, email
                       FROM users
                       WHERE is_approved = 2
                         AND (group_name IS NULL OR group_name != 'private')''')
@@ -142,8 +142,8 @@ def get_users_by_payment_status():
     status_1, status_0, status_minus_1 = [], [], []
     now = int(time.time())
 
-    for tg_id, paid_until, username in rows:
-        user_info = (tg_id, username)
+    for tg_id, paid_until, username, email in rows:
+        user_info = (tg_id, username, email)
         if not paid_until:
             status_1.append(user_info)
             continue

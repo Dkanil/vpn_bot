@@ -80,13 +80,17 @@ async def sync_all_users_from_panel(auth_manager: AuthManager):
         DBManager.update_user_from_panel(tg_id, c_date, p_until, group, email)
 
 
-async def send_admin_individual_notification(tg_id, status_text):
+async def send_admin_individual_notification(tg_id, username, email, status_text):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Сделать рассылку должникам", callback_data="admin_broadcast_payment")]
     ])
+
+    un_text = f" (@{username})" if username else ""
+    email_text = f"\n📧 <b>Email в панели:</b> <code>{email}</code>" if email else ""
+
     text = (
         f"🔔 <b>Подошел срок оплаты!</b>\n\n"
-        f"👤 <b>Пользователь:</b> <a href='tg://user?id={tg_id}'>{tg_id}</a>\n"
+        f"👤 <b>Пользователь:</b> <a href='tg://user?id={tg_id}'>{tg_id}</a>{un_text}{email_text}\n"
         f"📊 <b>Статус:</b> {status_text}\n\n"
         f"Хотите отправить рассылку с напоминанием?"
     )
@@ -94,13 +98,15 @@ async def send_admin_individual_notification(tg_id, status_text):
 
 
 async def background_payment_check(auth_manager: AuthManager):
+    await asyncio.sleep(10)
+
     while True:
         try:
             await sync_all_users_from_panel(auth_manager)
             users = DBManager.get_users_for_payment_check()
             now = int(time.time())
 
-            for tg_id, paid_until, notify_level in users:
+            for tg_id, paid_until, notify_level, username, email in users:
                 if not paid_until:
                     continue
 
@@ -108,11 +114,11 @@ async def background_payment_check(auth_manager: AuthManager):
 
                 if left_seconds <= 0 and notify_level < 2:
                     DBManager.set_notify_level(tg_id, 2)
-                    await send_admin_individual_notification(tg_id, "🔴 ПРОСРОЧЕНО (менее 0 дней)")
+                    await send_admin_individual_notification(tg_id, username, email, "🔴 ПРОСРОЧЕНО")
 
                 elif 0 < left_seconds <= 7 * 24 * 3600 and notify_level < 1:
                     DBManager.set_notify_level(tg_id, 1)
-                    await send_admin_individual_notification(tg_id, "🟡 ИСТЕКАЕТ (менее 7 дней)")
+                    await send_admin_individual_notification(tg_id, username, email, "🟡 ИСТЕКАЕТ (менее 7 дней)")
 
                 elif left_seconds > 7 * 24 * 3600 and notify_level > 0:
                     DBManager.set_notify_level(tg_id, 0)
@@ -121,7 +127,6 @@ async def background_payment_check(auth_manager: AuthManager):
             print(f"Ошибка в background_payment_check: {e}")
 
         await asyncio.sleep(24 * 3600)
-
 
 @dp.message(Command('paid'))
 async def mark_paid_cmd(message: types.Message, command: CommandObject):
@@ -234,9 +239,10 @@ async def status_cmd(message: types.Message, auth_manager: AuthManager):
             if not users:
                 return "   <i>Пусто</i>\n"
             res = ""
-            for tg_id, username in users:
+            for tg_id, username, email in users:
                 un = f" - @{username}" if username else ""
-                res += f"   ├ <code>{tg_id}</code>{un}\n"
+                em = f" | 📧 {email}" if email else ""
+                res += f"   ├ <code>{tg_id}</code>{un}{em}\n"
             return res
 
         text = (
