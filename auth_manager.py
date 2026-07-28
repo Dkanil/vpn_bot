@@ -38,10 +38,10 @@ class AuthManager:
     async def check_connection(self) -> bool:
         res = await self.api_request("GET", "/panel/api/server/status")
         if res.get("success"):
-            print("AuthManager: Успешно подключено к панели 3x-ui по API токену!")
+            print("auth_manager: Успешно подключено к панели 3x-ui по API токену!")
             return True
         else:
-            print("AuthManager: Ошибка подключения. Проверьте URL и API_TOKEN.")
+            print("auth_manager: Ошибка подключения. Проверьте URL и API_TOKEN.")
             return False
 
     async def api_request(self, method: str, endpoint: str, **kwargs) -> dict:
@@ -55,19 +55,19 @@ class AuthManager:
                 body = await resp.text()
 
                 if resp.status in (401, 403):
-                    print(f"AuthManager: {resp.status} Ошибка доступа. Токен недействителен! Тело: {body[:100]}")
+                    print(f"auth_manager: {resp.status} Ошибка доступа. Токен недействителен! Тело: {body[:100]}")
                     return {"success": False, "msg": "AUTH_REQUIRED"}
 
                 if resp.status == 404:
-                    print(f"AuthManager: 404 Not Found для {full_url}")
+                    print(f"auth_manager: 404 Not Found для {full_url}")
                     return {"success": False, "msg": f"404 Not Found: {full_url}"}
 
                 try:
                     return json.loads(body)
                 except json.JSONDecodeError:
-                    print(f"AuthManager: Сервер вернул не JSON: {body[:200]}")
+                    print(f"auth_manager: Сервер вернул не JSON: {body[:200]}")
                     return {"success": False, "msg": "INVALID_JSON_RESPONSE"}
 
         except Exception as e:
-            print(f"AuthManager: Ошибка соединения с панелью: {e}")
+            print(f"auth_manager: Ошибка соединения с панелью: {e}")
             return {"success": False, "msg": f"CONNECTION_ERROR: {e}"}

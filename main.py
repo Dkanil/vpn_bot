@@ -5,9 +5,9 @@ import string
 import time
 from urllib.parse import quote
 
-import Filter
-import DBManager
-from AuthManager import AuthManager
+import filter
+import db_manager
+from auth_manager import AuthManager
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
@@ -77,7 +77,7 @@ async def sync_all_users_from_panel(auth_manager: AuthManager):
         p_until = c_date + (90 * 24 * 3600)
         group = c.get("group") or c.get("group_name") or ""
 
-        DBManager.update_user_from_panel(tg_id, c_date, p_until, group, email)
+        db_manager.update_user_from_panel(tg_id, c_date, p_until, group, email)
 
 
 async def send_admin_individual_notification(tg_id, username, email, status_text):
@@ -103,7 +103,7 @@ async def background_payment_check(auth_manager: AuthManager):
     while True:
         try:
             await sync_all_users_from_panel(auth_manager)
-            users = DBManager.get_users_for_payment_check()
+            users = db_manager.get_users_for_payment_check()
             now = int(time.time())
 
             for tg_id, paid_until, notify_level, username, email in users:
@@ -113,15 +113,15 @@ async def background_payment_check(auth_manager: AuthManager):
                 left_seconds = paid_until - now
 
                 if left_seconds <= 0 and notify_level < 2:
-                    DBManager.set_notify_level(tg_id, 2)
+                    db_manager.set_notify_level(tg_id, 2)
                     await send_admin_individual_notification(tg_id, username, email, "🔴 ПРОСРОЧЕНО")
 
                 elif 0 < left_seconds <= 7 * 24 * 3600 and notify_level < 1:
-                    DBManager.set_notify_level(tg_id, 1)
+                    db_manager.set_notify_level(tg_id, 1)
                     await send_admin_individual_notification(tg_id, username, email, "🟡 ИСТЕКАЕТ (менее 7 дней)")
 
                 elif left_seconds > 7 * 24 * 3600 and notify_level > 0:
-                    DBManager.set_notify_level(tg_id, 0)
+                    db_manager.set_notify_level(tg_id, 0)
 
         except Exception as e:
             print(f"Ошибка в background_payment_check: {e}")
@@ -143,7 +143,7 @@ async def mark_paid_cmd(message: types.Message, command: CommandObject):
     tg_id = int(parts[0])
     months = int(parts[1]) if len(parts) > 1 else 3
 
-    if DBManager.extend_payment(tg_id, months):
+    if db_manager.extend_payment(tg_id, months):
         await message.answer(f"✅ Подписка для юзера <code>{tg_id}</code> продлена на {months} мес.", parse_mode="HTML")
         try:
             await bot.send_message(tg_id,
@@ -193,7 +193,7 @@ async def handle_admin_payment_decision(call: types.CallbackQuery, callback_data
     target_id = callback_data.user_id
 
     if callback_data.action == "approve":
-        if DBManager.extend_payment(target_id, 3):
+        if db_manager.extend_payment(target_id, 3):
             await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА</b>", parse_mode="HTML")
 
             try:
@@ -233,7 +233,7 @@ async def status_cmd(message: types.Message, auth_manager: AuthManager):
     try:
         await sync_all_users_from_panel(auth_manager)
 
-        status_1, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
+        status_1, status_0, status_minus_1 = db_manager.get_users_by_payment_status()
 
         def format_users(users):
             if not users:
@@ -293,7 +293,7 @@ async def cancel_fsm(message: types.Message, state: FSMContext):
 @dp.message(BroadcastState.waiting_for_payment_message)
 async def send_payment_message(message: types.Message, state: FSMContext):
     text = message.text
-    _, status_0, status_minus_1 = DBManager.get_users_by_payment_status()
+    _, status_0, status_minus_1 = db_manager.get_users_by_payment_status()
 
     targets = [u[0] for u in status_0 + status_minus_1]
 
@@ -370,13 +370,13 @@ async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: 
 
     if result.get("success"):
         print(f"Сгенерирован новый клиент VPN: {user_email} (inbounds: {target_inbounds})")
-        DBManager.update_user_email(tg_id, user_email)
+        db_manager.update_user_email(tg_id, user_email)
         return sub_id, "Успешно создано"
 
     if "email already in use" in msg.lower():
         existing_client = await get_client_by_email(user_email, auth_manager)
         if existing_client and existing_client.get("subId"):
-            DBManager.update_user_email(tg_id, user_email)
+            db_manager.update_user_email(tg_id, user_email)
             return existing_client.get("subId"), "Клиент уже существовал"
 
     print(f"Ошибка при добавлении клиента VPN {user_email}: {msg}")
@@ -385,7 +385,7 @@ async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: 
 
 async def resolve_existing_client(user_info, auth_manager: AuthManager):
     tg_id = user_info.id
-    saved_email = DBManager.get_user_email(tg_id)
+    saved_email = db_manager.get_user_email(tg_id)
     if saved_email:
         client = await get_client_by_email(saved_email, auth_manager)
         if client:
@@ -396,7 +396,7 @@ async def resolve_existing_client(user_info, auth_manager: AuthManager):
         client = await get_client_by_email(candidate_email, auth_manager)
         if client:
             actual_email = client.get("email") or candidate_email
-            DBManager.update_user_email(tg_id, actual_email)
+            db_manager.update_user_email(tg_id, actual_email)
             print(f"Локально зафиксирован email '{actual_email}' для юзера {tg_id}")
             return client
     return None
@@ -445,9 +445,9 @@ async def get_client_by_email(email: str, auth_manager: AuthManager):
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     tg_id = message.from_user.id
-    status = DBManager.is_user_approved(tg_id)
+    status = db_manager.is_user_approved(tg_id)
     if status is None:
-        DBManager.add_user(tg_id, 0)
+        db_manager.add_user(tg_id, 0)
         await message.answer("Заявка отправлена администратору. Ожидайте.")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -478,13 +478,13 @@ async def handle_admin_action(call: types.CallbackQuery, callback_data: AdminAct
     target_user_id = callback_data.user_id
 
     if callback_data.action == "approve":
-        DBManager.add_user(target_user_id, 1)
+        db_manager.add_user(target_user_id, 1)
         await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ОДОБРЕНО</b>", parse_mode="HTML")
         await bot.send_message(target_user_id,
                                "🎉 Администратор одобрил доступ!\nВведите /help для получения инструкций.")
 
     elif callback_data.action == "reject":
-        DBManager.add_user(target_user_id, -1)
+        db_manager.add_user(target_user_id, -1)
         await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, "К сожалению, вам отказано в доступе.")
 
@@ -500,7 +500,7 @@ async def broadcast_command(message: types.Message, command: CommandObject):
 
     try:
         text = command.args
-        users = DBManager.get_vpn_users()
+        users = db_manager.get_vpn_users()
 
         await message.answer(f"⏳ Начинаю рассылку для {len(users)} пользователей...")
         count = 0
@@ -522,7 +522,7 @@ async def broadcast_command(message: types.Message, command: CommandObject):
 @dp.message(Command('create_token'))
 async def create_token(message: types.Message, auth_manager: AuthManager):
     tg_id = message.from_user.id
-    status = DBManager.is_user_approved(tg_id)
+    status = db_manager.is_user_approved(tg_id)
     if status is None or status < 1:
         await message.answer("У вас нет доступа.")
         return
@@ -546,7 +546,7 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
             "<i>Скопируйте её и добавьте в приложение (v2rayN, V2Box, Happ) через опцию <b>'Добавить подписку'</b></i>"
             "Подробная инструкция по команде /help"
         )
-        DBManager.add_user(tg_id, 2)
+        db_manager.add_user(tg_id, 2)
         await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
     except Exception as e:
@@ -556,7 +556,7 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
 
 @dp.message(Command('help'))
 async def help_cmd(message: types.Message):
-    if DBManager.is_user_approved(message.from_user.id) < 1:
+    if db_manager.is_user_approved(message.from_user.id) < 1:
         await message.answer("У вас нет доступа.")
         return
 
@@ -584,8 +584,8 @@ async def help_cmd(message: types.Message):
     - <b>iPhone (iOS), macOS:</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
 
 3️⃣ Скопировать полученную ссылку подписки и добавить её в клиент.
-📱 <b>На телефоне и macOS (V2Box):</b> 
-Перейдите на вкладку <i>«Конфигурации»</i> (снизу) ➔ Нажмите <b>«+»</b> (сверху) ➔ Выберите <i>«Добавить подписку»</i> ➔ Задайте любое имя в поле "Название" (например, <code>dan4ek VPN</code>) и вставьте скопированную ссылку подписки в поле URL.
+📱 <b>На телефоне и macOS (Happ):</b> 
+Нажмите <b>«+»</b> (сверху) ➔ Выберите <i>«Добавить подписку»</i> ➔ Dставьте скопированную ссылку подписки в поле URL ➔ Нажмите <i>«Сохранить»</i>.
 
 ⚡ <b>Как запустить и выбрать рабочий протокол:</b> 
 После добавления подписки нажмите на кнопку <b>«Пинг»</b> (кнопка в правом верхнем углу «Пинг всех»). У каждого протокола в списке появится значение задержки в миллисекундах (например, <code>120 ms</code>). Выберите тот вариант, где пинг минимальный и горит зеленым цветом (просто нажмите на него), а затем нажмите подключиться.
@@ -597,7 +597,7 @@ async def help_cmd(message: types.Message):
 ⚡ <b>Как протестировать и выбрать сервер:</b> 
 Нажмите на кнопку оо значком молнии, либо спидометра. В столбце <i>«Delay»</i> (Задержка) появятся цифры в миллисекундах, а в столбце Speed текущая скорость. 
 Выберите любой рабочий сервер с наименьшим пингом (где отображаются цифры, а не -1) и наибольшей скоростью, кликните на него дважды, чтобы выбрать его. 
-В самом низу окна выберите <i>«Clear system proxy»</i> ➔ включите тумблер <i>«Enable Tun»</i>.
+В самом низу окна выберите <i>«Set system proxy»</i> ➔ выключите тумблер <i>«Enable Tun»</i>.
 
 4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали напрямую без VPN."""
 
@@ -611,22 +611,22 @@ async def help_cmd(message: types.Message):
     await message.answer(final_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def main():
-    DBManager.init_db()
+    db_manager.init_db()
     auth_manager = AuthManager(
         url=os.getenv("URL"),
         api_token=os.getenv("API_TOKEN", ""),
     )
     await auth_manager.check_connection()
 
-    dp.message.middleware(Filter.BannedUserMiddleware())
-    dp.callback_query.middleware(Filter.BannedUserMiddleware())
+    dp.message.middleware(filter.BannedUserMiddleware())
+    dp.callback_query.middleware(filter.BannedUserMiddleware())
     asyncio.create_task(background_payment_check(auth_manager))
 
     try:
         await dp.start_polling(bot, auth_manager=auth_manager)
     finally:
         print("Выключение бота...")
-        DBManager.close_db()
+        db_manager.close_db()
         await auth_manager.close()
         print("Работа бота завершена.")
 
