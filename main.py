@@ -223,7 +223,7 @@ async def status_cmd(message: types.Message, auth_manager: AuthManager):
             res = ""
             for tg_id, username, email in users:
                 res += Config.user_row.format(tg_id=tg_id,
-                                              username=html.escape(f"@username" if username else ""),
+                                              username=html.escape(f"@{username}" if username else ""),
                                               email=html.escape(email))
             return res
 
