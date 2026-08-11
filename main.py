@@ -222,7 +222,9 @@ async def status_cmd(message: types.Message, auth_manager: AuthManager):
                 return Config.empty_users_list
             res = ""
             for tg_id, username, email in users:
-                res += Config.user_row.format(username=f"@username" if username else "", email=email)
+                res += Config.user_row.format(tg_id=tg_id,
+                                              username=html.escape(f"@username" if username else ""),
+                                              email=html.escape(email))
             return res
 
         text = (Config.status_message.format(paid_count=len(paid), paid_list=format_users(paid),
