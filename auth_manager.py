@@ -38,36 +38,36 @@ class AuthManager:
     async def check_connection(self) -> bool:
         res = await self.api_request("GET", "/panel/api/server/status")
         if res.get("success"):
-            print("auth_manager: Успешно подключено к панели 3x-ui по API токену!")
+            print("auth_manager: Successfully connected to 3x-ui by API token!")
             return True
         else:
-            print("auth_manager: Ошибка подключения. Проверьте URL и API_TOKEN.")
+            print("auth_manager: 3x-ui connection error. Check URL and API_TOKEN.")
             return False
 
     async def api_request(self, method: str, endpoint: str, **kwargs) -> dict:
         session = await self.get_session()
         full_url = f"{self.url}{endpoint}"
 
-        print(f"Запрос {method} -> {endpoint}")
+        print(f"Request {method} -> {endpoint}")
 
         try:
             async with session.request(method, full_url, **kwargs) as resp:
                 body = await resp.text()
 
                 if resp.status in (401, 403):
-                    print(f"auth_manager: {resp.status} Ошибка доступа. Токен недействителен! Тело: {body[:100]}")
+                    print(f"auth_manager: {resp.status} Access denied. Token is invalid! Response body: {body[:100]}")
                     return {"success": False, "msg": "AUTH_REQUIRED"}
 
                 if resp.status == 404:
-                    print(f"auth_manager: 404 Not Found для {full_url}")
+                    print(f"auth_manager: 404 Not Found for {full_url}")
                     return {"success": False, "msg": f"404 Not Found: {full_url}"}
 
                 try:
                     return json.loads(body)
                 except json.JSONDecodeError:
-                    print(f"auth_manager: Сервер вернул не JSON: {body[:200]}")
+                    print(f"auth_manager: Not JSON in server response: {body[:200]}")
                     return {"success": False, "msg": "INVALID_JSON_RESPONSE"}
 
         except Exception as e:
-            print(f"auth_manager: Ошибка соединения с панелью: {e}")
+            print(f"auth_manager: Error connecting to the 3x-ui panel: {e}")
             return {"success": False, "msg": f"CONNECTION_ERROR: {e}"}

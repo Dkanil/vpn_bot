@@ -29,15 +29,16 @@ def init_db():
         except sqlite3.OperationalError:
             pass
     conn.commit()
+    print("Database connected")
 
 
 def close_db():
     global conn
     if conn:
         conn.close()
-        print("Database disconnected.")
+        print("Database disconnected")
     else:
-        print("Database was not connected.")
+        print("Database was not connected")
 
 
 def update_username(tg_id, username):

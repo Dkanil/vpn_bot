@@ -3,11 +3,13 @@ import os
 import secrets
 import string
 import time
+import html
 from urllib.parse import quote
 
 import filter
 import db_manager
 from auth_manager import AuthManager
+from config import Config
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
@@ -80,20 +82,16 @@ async def sync_all_users_from_panel(auth_manager: AuthManager):
         db_manager.update_user_from_panel(tg_id, c_date, p_until, group, email)
 
 
-async def send_admin_individual_notification(tg_id, username, email, status_text):
+async def send_admin_individual_notification(tg_id, username, email, status):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Сделать рассылку должникам", callback_data="admin_broadcast_payment")]
+        [InlineKeyboardButton(text=Config.payment_notification_button, callback_data="admin_broadcast_payment")]
     ])
 
-    un_text = f" (@{username})" if username else ""
-    email_text = f"\n📧 <b>Email в панели:</b> <code>{email}</code>" if email else ""
+    text = Config.payment_notification.format(tg_id=tg_id,
+                                              username=html.escape(username if username else ""),
+                                              email=html.escape(email),
+                                              status=status)
 
-    text = (
-        f"🔔 <b>Подошел срок оплаты!</b>\n\n"
-        f"👤 <b>Пользователь:</b> <a href='tg://user?id={tg_id}'>{tg_id}</a>{un_text}{email_text}\n"
-        f"📊 <b>Статус:</b> {status_text}\n\n"
-        f"Хотите отправить рассылку с напоминанием?"
-    )
     await bot.send_message(ADMIN_ID, text, parse_mode="HTML", reply_markup=kb)
 
 
@@ -114,19 +112,20 @@ async def background_payment_check(auth_manager: AuthManager):
 
                 if left_seconds <= 0 and notify_level < 2:
                     db_manager.set_notify_level(tg_id, 2)
-                    await send_admin_individual_notification(tg_id, username, email, "🔴 ПРОСРОЧЕНО")
+                    await send_admin_individual_notification(tg_id, username, email, Config.subscription_expired)
 
                 elif 0 < left_seconds <= 7 * 24 * 3600 and notify_level < 1:
                     db_manager.set_notify_level(tg_id, 1)
-                    await send_admin_individual_notification(tg_id, username, email, "🟡 ИСТЕКАЕТ (менее 7 дней)")
+                    await send_admin_individual_notification(tg_id, username, email, Config.subscription_expires)
 
                 elif left_seconds > 7 * 24 * 3600 and notify_level > 0:
                     db_manager.set_notify_level(tg_id, 0)
 
         except Exception as e:
-            print(f"Ошибка в background_payment_check: {e}")
+            print(f"Error processing background_payment_check: {e}")
 
         await asyncio.sleep(24 * 3600)
+
 
 @dp.message(Command('paid'))
 async def mark_paid_cmd(message: types.Message, command: CommandObject):
@@ -135,8 +134,7 @@ async def mark_paid_cmd(message: types.Message, command: CommandObject):
 
     args = command.args
     if not args:
-        await message.answer(
-            "Использование: /paid <tg_id> [кол-во месяцев (по умолчанию 3)]\nПример: /paid 123456789 3")
+        await message.answer(Config.paid_instruction)
         return
 
     parts = args.split()
@@ -144,41 +142,34 @@ async def mark_paid_cmd(message: types.Message, command: CommandObject):
     months = int(parts[1]) if len(parts) > 1 else 3
 
     if db_manager.extend_payment(tg_id, months):
-        await message.answer(f"✅ Подписка для юзера <code>{tg_id}</code> продлена на {months} мес.", parse_mode="HTML")
+        await message.answer(Config.admin_subscription_update.format(tg_id=tg_id, months=months), parse_mode="HTML")
         try:
-            await bot.send_message(tg_id,
-                                   f"🎉 <b>Спасибо за оплату!</b>\nВаша подписка на VPN успешно продлена на {months} мес.",
-                                   parse_mode="HTML")
+            await bot.send_message(tg_id, Config.subscription_update.format(months=months), parse_mode="HTML")
         except Exception:
-            await message.answer("⚠️ Подписка продлена, но юзер заблокировал бота.")
+            await message.answer(Config.admin_subscription_warning_update.format(tg_id=tg_id))
     else:
-        await message.answer("❌ Пользователь не найден.")
+        await message.answer(Config.user_not_found_error.format(tg_id=tg_id))
 
 
 @dp.callback_query(F.data == "user_notified_payment")
 async def handle_user_payment_notify(call: types.CallbackQuery):
     tg_id = call.from_user.id
-    username = call.from_user.username or "Без юзернейма"
+    username = call.from_user.username or ""
 
-    await call.message.edit_text(
-        f"{call.message.text}\n\n⏳ <i>Заявка на проверку оплаты отправлена администратору. Ожидайте подтверждения.</i>",
-        parse_mode="HTML"
-    )
+    await call.message.edit_text(f"{call.message.text}\n\n{Config.user_payment_confirm_wait_response}", parse_mode="HTML")
 
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Подтвердить (3 мес)",
+            InlineKeyboardButton(text=Config.admin_payment_approve_button,
                                  callback_data=PaymentAction(action="approve", user_id=tg_id).pack()),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=PaymentAction(action="reject", user_id=tg_id).pack())
+            InlineKeyboardButton(text=Config.admin_payment_reject_button,
+                                 callback_data=PaymentAction(action="reject", user_id=tg_id).pack())
         ]
     ])
 
     await bot.send_message(
         ADMIN_ID,
-        f"💸 <b>Пользователь сообщил об оплате!</b>\n\n"
-        f"👤 <b>Пользователь:</b> <a href='tg://user?id={tg_id}'>{tg_id}</a>\n"
-        f"📧 <b>Юзернейм:</b> @{username}\n\n"
-        f"Подтвердить продление подписки на 3 месяца?",
+        Config.payment_confirmation.format(tg_id=tg_id, username=html.escape(username)),
         parse_mode="HTML",
         reply_markup=admin_kb
     )
@@ -194,31 +185,22 @@ async def handle_admin_payment_decision(call: types.CallbackQuery, callback_data
 
     if callback_data.action == "approve":
         if db_manager.extend_payment(target_id, 3):
-            await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА</b>", parse_mode="HTML")
+            await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_confirmation_approve_response}", parse_mode="HTML")
 
             try:
-                await bot.send_message(
-                    target_id,
-                    "🎉 <b>Спасибо за оплату!</b>\n Подписка на VPN успешно продлена на 3 месяца.",
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
+                await bot.send_message(target_id, Config.payment_confirmation_approve, parse_mode="HTML")
+            except Exception as e:
+                print(f"Error in handle_admin_payment_decision: {e}")
         else:
-            await call.message.edit_text(f"{call.message.text}\n\n❌ Ошибка: Пользователь не найден в БД.",
-                                         parse_mode="HTML")
+            await call.message.edit_text(f"{call.message.text}\n\n{Config.unknown_error}")
 
     elif callback_data.action == "reject":
-        await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode="HTML")
 
         try:
-            await bot.send_message(
-                target_id,
-                "❌ <b>Оплата не подтверждена.</b>\n Пожалуйста, проверьте статус перевода или свяжитесь с администратором (контакт в описании бота).",
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
+            await bot.send_message(target_id, Config.payment_confirmation_reject, parse_mode="HTML")
+        except Exception as e:
+            print(f"Error in handle_admin_payment_decision: {e}")
 
     await call.answer()
 
@@ -228,57 +210,44 @@ async def status_cmd(message: types.Message, auth_manager: AuthManager):
     if message.from_user.id != ADMIN_ID:
         return
 
-    status_msg = await message.answer("🔄 Синхронизирую данные с панелью, подождите...")
+    status_msg = await message.answer(Config.synchronize_status)
 
     try:
         await sync_all_users_from_panel(auth_manager)
 
-        status_1, status_0, status_minus_1 = db_manager.get_users_by_payment_status()
+        paid, expires, expired = db_manager.get_users_by_payment_status()
 
         def format_users(users):
             if not users:
-                return "   <i>Пусто</i>\n"
+                return Config.empty_users_list
             res = ""
             for tg_id, username, email in users:
-                un = f" - @{username}" if username else ""
-                em = f" | 📧 {email}" if email else ""
-                res += f"   ├ <code>{tg_id}</code>{un}{em}\n"
+                res += Config.user_row.format(username=f"@username" if username else "", email=email)
             return res
 
-        text = (
-            "📊 <b>Статус оплат (без учета группы private):</b>\n\n"
-            f"🟢 <b>Оплачено ({len(status_1)} чел.):</b>\n"
-            f"{format_users(status_1)}\n"
-            f"🟡 <b>Истекает менее 7 дней ({len(status_0)} чел.):</b>\n"
-            f"{format_users(status_0)}\n"
-            f"🔴 <b>Просрочено ({len(status_minus_1)} чел.):</b>\n"
-            f"{format_users(status_minus_1)}\n"
-            "Для продления: <code>/paid &lt;tg_id&gt; [мес]</code>"
-        )
+        text = (Config.status_message.format(paid_count=len(paid), paid_list=format_users(paid),
+                                             expires_count=len(expires), expires_list=format_users(expires),
+                                             expired_count=len(expired), expired_list=format_users(expired)))
 
         if len(text) > 4000:
-            text = text[:4000] + "...\n\n<i>(Список обрезан из-за лимита длины Telegram)</i>"
+            text = text[:4000] + Config.truncate_message
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Написать должникам", callback_data="admin_broadcast_payment")]
+            [InlineKeyboardButton(text=Config.payment_notification_button, callback_data="admin_broadcast_payment")]
         ])
 
         await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
     except Exception as e:
-        print(f"Ошибка при обработке /status: {e}")
-        await status_msg.edit_text("❌ Произошла ошибка при обновлении данных из панели.")
+        print(f"Error processing command /status: {e}")
+        await status_msg.edit_text(Config.update_status_error)
 
 
 @dp.callback_query(F.data == "admin_broadcast_payment")
 async def ask_payment_message(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID:
         return
-    await call.message.answer(
-        "📝 <b>Введите текст сообщения.</b>\n"
-        "Оно будет отправлено всем, у кого статус оплаты 🟡 и 🔴 (исключая группу private).\n\n"
-        "<i>Для отмены введите /cancel</i>", parse_mode="HTML"
-    )
+    await call.message.answer(Config.payment_broadcast_instruction, parse_mode="HTML")
     await state.set_state(BroadcastState.waiting_for_payment_message)
     await call.answer()
 
@@ -287,37 +256,36 @@ async def ask_payment_message(call: types.CallbackQuery, state: FSMContext):
 async def cancel_fsm(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
         await state.clear()
-        await message.answer("Действие отменено.")
+        await message.answer(Config.cancel_message)
 
 
 @dp.message(BroadcastState.waiting_for_payment_message)
 async def send_payment_message(message: types.Message, state: FSMContext):
-    text = message.text
     _, status_0, status_minus_1 = db_manager.get_users_by_payment_status()
 
     targets = [u[0] for u in status_0 + status_minus_1]
 
     if not targets:
-        await message.answer("Никто не должен оплату. Рассылка отменена.")
+        await message.answer(Config.payment_broadcast_cancel)
         await state.clear()
         return
 
-    await message.answer(f"⏳ Начинаю рассылку для {len(targets)} пользователей...")
+    await message.answer(Config.payment_broadcast_starting.format(len(targets)))
     count = 0
 
     user_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Я оплатил", callback_data="user_notified_payment")]
+        [InlineKeyboardButton(text=Config.user_payment_confirm_button, callback_data="user_notified_payment")]
     ])
 
     for tg_id in targets:
         try:
-            await bot.send_message(tg_id, text, parse_mode="HTML", reply_markup=user_kb)
+            await bot.send_message(tg_id, message.text, parse_mode="HTML", reply_markup=user_kb)
             count += 1
             await asyncio.sleep(0.1)
         except Exception:
             pass
 
-    await message.answer(f"✅ Рассылка завершена. Успешно доставлено: {count} из {len(targets)}")
+    await message.answer(Config.broadcast_success.format(send_count=count, users_count=len(targets)))
     await state.clear()
 
 
@@ -329,7 +297,7 @@ async def get_db_cmd(message: types.Message):
     db_path = "users.db"
 
     if not os.path.exists(db_path):
-        await message.reply("❌ Файл базы данных <code>users.db</code> не найден на сервере.", parse_mode="HTML")
+        await message.reply(Config.database_backup_not_found, parse_mode="HTML")
         return
 
     try:
@@ -337,12 +305,12 @@ async def get_db_cmd(message: types.Message):
 
         await message.reply_document(
             document=db_file,
-            caption="📦 <b>Резервная копия локальной базы данных бота</b>",
+            caption=Config.database_backup_caption,
             parse_mode="HTML"
         )
     except Exception as e:
-        print(f"Ошибка при отправке базы данных: {e}")
-        await message.reply(f"❌ Не удалось отправить файл базы данных. Ошибка: {e}")
+        print(f"Error sending database backup: {e}")
+        await message.reply(Config.database_backup_failed)
 
 
 async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: list[int]):
@@ -366,21 +334,21 @@ async def add_vpn_client(user_info, auth_manager: AuthManager, target_inbounds: 
     }
 
     result = await auth_manager.api_request("POST", "/panel/api/clients/add", json=payload)
-    msg = result.get("msg", "Ошибка API")
+    log_message = result.get("msg", "API error")
 
     if result.get("success"):
-        print(f"Сгенерирован новый клиент VPN: {user_email} (inbounds: {target_inbounds})")
+        print(f"Created new VPN client: {user_email} (inbounds: {target_inbounds})")
         db_manager.update_user_email(tg_id, user_email)
-        return sub_id, "Успешно создано"
+        return sub_id, "Created successfully"
 
-    if "email already in use" in msg.lower():
+    if "email already in use" in log_message.lower():
         existing_client = await get_client_by_email(user_email, auth_manager)
         if existing_client and existing_client.get("subId"):
             db_manager.update_user_email(tg_id, user_email)
-            return existing_client.get("subId"), "Клиент уже существовал"
+            return existing_client.get("subId"), "Client already exists"
 
-    print(f"Ошибка при добавлении клиента VPN {user_email}: {msg}")
-    return None, msg
+    print(f"Error creating new VPN client {user_email}: {log_message}")
+    return None, log_message
 
 
 async def resolve_existing_client(user_info, auth_manager: AuthManager):
@@ -397,7 +365,7 @@ async def resolve_existing_client(user_info, auth_manager: AuthManager):
         if client:
             actual_email = client.get("email") or candidate_email
             db_manager.update_user_email(tg_id, actual_email)
-            print(f"Локально зафиксирован email '{actual_email}' для юзера {tg_id}")
+            print(f"Email '{actual_email}' is fixed in database for user with tg_id={tg_id}")
             return client
     return None
 
@@ -413,7 +381,7 @@ async def get_client_credentials(user_info, auth_manager: AuthManager):
             missing_inbounds = list(set(target_inbounds) - set(existing_inbounds))
 
             if missing_inbounds:
-                print(f"Привязываем клиента {existing_client['email']} к новым протоколам: {missing_inbounds}")
+                print(f"Connecting user with email {existing_client['email']} to missing inbounds: {missing_inbounds}")
                 await auth_manager.api_request(
                     "POST",
                     f"/panel/api/clients/{quote(existing_client['email'], safe='')}/attach",
@@ -448,45 +416,45 @@ async def start_cmd(message: types.Message):
     status = db_manager.is_user_approved(tg_id)
     if status is None:
         db_manager.add_user(tg_id, 0)
-        await message.answer("Заявка отправлена администратору. Ожидайте.")
+        await message.answer(Config.start_command_wait_response)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Разрешить",
+                    text=Config.admin_register_user_approve,
                     callback_data=AdminAction(action="approve", user_id=tg_id).pack()
                 ),
                 InlineKeyboardButton(
-                    text="❌ Отклонить",
+                    text=Config.admin_register_user_reject,
                     callback_data=AdminAction(action="reject", user_id=tg_id).pack()
                 )]
         ])
-        await bot.send_message(ADMIN_ID,
-                               f"Новый пользователь: {message.from_user.full_name} (@{message.from_user.username})\nID: {tg_id}",
-                               reply_markup=kb)
+        username = message.from_user.username
+        await bot.send_message(ADMIN_ID, Config.admin_register_request.format(full_name=message.from_user.full_name,
+                                                                              username=username if username else "",
+                                                                              tg_id=tg_id), reply_markup=kb)
     elif status >= 1:
         await help_cmd(message)
     elif status == 0:
-        await message.answer("Ваша заявка на рассмотрении администратора. Ожидайте.")
+        await message.answer(Config.start_command_retry_response)
 
 
 @dp.callback_query(AdminAction.filter())
 async def handle_admin_action(call: types.CallbackQuery, callback_data: AdminAction):
     if call.from_user.id != ADMIN_ID:
-        await call.answer("Куда лезешь?!", show_alert=True)
+        await call.answer(Config.access_denied_error, show_alert=True)
         return
 
     target_user_id = callback_data.user_id
 
     if callback_data.action == "approve":
         db_manager.add_user(target_user_id, 1)
-        await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ОДОБРЕНО</b>", parse_mode="HTML")
-        await bot.send_message(target_user_id,
-                               "🎉 Администратор одобрил доступ!\nВведите /help для получения инструкций.")
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.register_approve_response}", parse_mode="HTML")
+        await bot.send_message(target_user_id, Config.register_approve)
 
     elif callback_data.action == "reject":
         db_manager.add_user(target_user_id, -1)
-        await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
-        await bot.send_message(target_user_id, "К сожалению, вам отказано в доступе.")
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode="HTML")
+        await bot.send_message(target_user_id, Config.register_reject)
 
 
 @dp.message(Command('broadcast'))
@@ -495,28 +463,28 @@ async def broadcast_command(message: types.Message, command: CommandObject):
         return
 
     if not command.args:
-        await message.answer("Использование: /broadcast <текст сообщения>")
+        await message.answer(Config.broadcast_instruction)
         return
 
     try:
         text = command.args
         users = db_manager.get_vpn_users()
 
-        await message.answer(f"⏳ Начинаю рассылку для {len(users)} пользователей...")
+        await message.answer(Config.broadcast_starting.format(users_count=len(users)))
         count = 0
         for user_id in users:
             try:
                 await bot.send_message(user_id, text, parse_mode=ParseMode.HTML)
                 count += 1
                 await asyncio.sleep(0.1)
-                print(f"Отправлено юзеру {user_id}")
+                print(f"Send to user {user_id}")
             except Exception as e:
-                print(f"Не удалось отправить юзеру {user_id}: {e}")
+                print(f"Failed to send to user {user_id}: {e}")
 
-        await message.answer(f"✅ Рассылка завершена.\nУспешно доставлено: {count} из {len(users)}")
+        await message.answer(Config.broadcast_success.format(send_count=count, users_count=len(users)))
     except Exception as e:
-        print(f"Ошибка при рассылке: {e}")
-        await message.answer("❌ Произошла ошибка при рассылке.")
+        print(f"Error processing broadcast command: {e}")
+        await message.answer(Config.broadcast_error)
 
 
 @dp.message(Command('create_token'))
@@ -524,91 +492,44 @@ async def create_token(message: types.Message, auth_manager: AuthManager):
     tg_id = message.from_user.id
     status = db_manager.is_user_approved(tg_id)
     if status is None or status < 1:
-        await message.answer("У вас нет доступа.")
+        await message.answer(Config.access_denied_error)
         return
 
-    msg = await message.answer("Получение токена, подождите...")
+    msg = await message.answer(Config.create_token_wait)
 
     try:
         sub_id = await get_client_credentials(message.from_user, auth_manager)
 
         sub_url_base = os.getenv('SUB_URL', '').rstrip('/')
         if not sub_url_base:
-            raise Exception("Не задана переменная SUB_URL в настройках сервера")
+            raise Exception("SUB_URL value is not set!")
 
         sub_link = f"{sub_url_base}/{sub_id}"
+        text = Config.create_token_success.format(sub_link=sub_link)
 
-        text = (
-            "✅ <b>Ваша персональная подписка готова!</b>\n\n"
-            "По этой ссылке ваше приложение автоматически загрузит все доступные протоколы.\n\n"
-            "🔗 <b>Ваша ссылка подписки:</b>\n"
-            f"<pre>{sub_link}</pre>\n\n"
-            "<i>Скопируйте её и добавьте в приложение (v2rayN, V2Box, Happ) через опцию <b>'Добавить подписку'</b></i>"
-            "Подробная инструкция по команде /help"
-        )
         db_manager.add_user(tg_id, 2)
         await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
     except Exception as e:
-        print(f"Ошибка при создании токена: {e}")
-        await msg.edit_text("❌ Ошибка при создании токена")
+        print(f"Error generating token: {e}")
+        await msg.edit_text(Config.create_token_error)
 
 
 @dp.message(Command('help'))
 async def help_cmd(message: types.Message):
     if db_manager.is_user_approved(message.from_user.id) < 1:
-        await message.answer("У вас нет доступа.")
+        await message.answer(Config.access_denied_error)
         return
 
-    base_text = """<b>Список доступных команд:</b>
-/create_token - получить ссылку на VPN подписку
-/help - помощь\n\n"""
-
-    admin_text = """🛠 <b>Команды администратора:</b>
-/status — статус оплат пользователей и запуск рассылки должникам
-/paid &lt;tg_id&gt; [мес] — продлить подписку пользователю (по умолч. 3 мес)
-/getdb — выгрузить резервную копию базы данных (users.db)
-/broadcast &lt;текст&gt; — массовая рассылка всем пользователям с активным VPN
-/cancel — отменить текущий ввод текста (для рассылки)\n\n"""
-
-    instruction_text = """<b>Инструкция по установке:</b>
-
-1️⃣ Получить свою персональную ссылку подписки с помощью команды /create_token
-
-2️⃣ Скачать и установить клиент для VPN:
-    - <b>Windows:</b> <a href='https://v2rayn.2dust.link'>Скачать v2rayN</a> 
-        (Необходимо загрузить <code>v2rayN-windows-64.zip</code>) 
-        Скачанный архив распаковать и запустить <code>v2rayN.exe</code>
-        (Если с официального сайта грузит медленно, то можно скачать с GitHub тот же файл: <a href='https://github.com/2dust/v2rayN/releases'>GitHub</a>)
-    - <b>Android:</b> <a href='https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box&hl=ru'>Скачать V2Box (Google Play)</a>
-    - <b>iPhone (iOS), macOS:</b> <a href='https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690'>Скачать V2Box (App Store)</a>
-
-3️⃣ Скопировать полученную ссылку подписки и добавить её в клиент.
-📱 <b>На телефоне и macOS (Happ):</b> 
-Нажмите <b>«+»</b> (сверху) ➔ Выберите <i>«Добавить подписку»</i> ➔ Dставьте скопированную ссылку подписки в поле URL ➔ Нажмите <i>«Сохранить»</i>.
-
-⚡ <b>Как запустить и выбрать рабочий протокол:</b> 
-После добавления подписки нажмите на кнопку <b>«Пинг»</b> (кнопка в правом верхнем углу «Пинг всех»). У каждого протокола в списке появится значение задержки в миллисекундах (например, <code>120 ms</code>). Выберите тот вариант, где пинг минимальный и горит зеленым цветом (просто нажмите на него), а затем нажмите подключиться.
-
-💻 <b>На компьютере (v2rayN):</b> 
-Откройте программу с правами администратора ➔ Нажмите <b>«+»</b> (сверху) ➔ Задайте любое имя в поле Remarks (например, <code>dan4ek VPN</code>) и вставьте скопированную ссылку подписки в поле URL ➔ Включите тумблер Enable update и установите в этой же строке значение 600. 
-Нажмите сверху <code>Subscription group</code> ➔ <code>Update subscription without proxy</code>. 
-
-⚡ <b>Как протестировать и выбрать сервер:</b> 
-Нажмите на кнопку оо значком молнии, либо спидометра. В столбце <i>«Delay»</i> (Задержка) появятся цифры в миллисекундах, а в столбце Speed текущая скорость. 
-Выберите любой рабочий сервер с наименьшим пингом (где отображаются цифры, а не -1) и наибольшей скоростью, кликните на него дважды, чтобы выбрать его. 
-В самом низу окна выберите <i>«Set system proxy»</i> ➔ выключите тумблер <i>«Enable Tun»</i>.
-
-4️⃣ <i>Дополнительно:</i> Вы можете настроить маршрутизацию, добавив определенные сайты (например, Госуслуги или банки) в список исключений, чтобы они работали напрямую без VPN."""
-
-    final_text = base_text
+    instruction = Config.instruction
 
     if message.from_user.id == ADMIN_ID:
-        final_text += admin_text
+        instruction = instruction.format(admin_instruction=Config.admin_instruction)
+    else:
+        instruction = instruction.format(admin_instruction="")
 
-    final_text += instruction_text
+    await message.answer(instruction, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-    await message.answer(final_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def main():
     db_manager.init_db()
@@ -625,10 +546,10 @@ async def main():
     try:
         await dp.start_polling(bot, auth_manager=auth_manager)
     finally:
-        print("Выключение бота...")
+        print("Shutting down...")
         db_manager.close_db()
         await auth_manager.close()
-        print("Работа бота завершена.")
+        print("Shutdown successful")
 
 
 if __name__ == "__main__":

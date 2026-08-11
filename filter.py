@@ -1,7 +1,9 @@
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message
+
 import db_manager
+from config import Config
 
 
 class BannedUserMiddleware(BaseMiddleware):
@@ -19,5 +21,5 @@ class BannedUserMiddleware(BaseMiddleware):
         if not user or db_manager.is_user_approved(user.id) != -1:
             return await handler(event, data)
         if isinstance(event, Message):
-            await event.answer("🚫 Вы заблокированы и не можете использовать этого бота.")
+            await event.answer(Config.ban_message)
         return None
