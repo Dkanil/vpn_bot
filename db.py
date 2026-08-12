@@ -1,9 +1,9 @@
-import sqlite3
-import time
+import logging, sqlite3, time
 
 conn = None
 cursor = None
 
+logger = logging.getLogger(__name__)
 
 def init_db():
     global conn, cursor
@@ -29,16 +29,16 @@ def init_db():
         except sqlite3.OperationalError:
             pass
     conn.commit()
-    print("Database connected")
+    logger.info("Database connected")
 
 
 def close_db():
     global conn
     if conn:
         conn.close()
-        print("Database disconnected")
+        logger.info("Database disconnected")
     else:
-        print("Database was not connected")
+        logger.warning("Database was not connected")
 
 
 def update_username(tg_id, username):
@@ -158,3 +158,4 @@ def get_users_by_payment_status():
             status_minus_1.append(user_info)
 
     return status_1, status_0, status_minus_1
+    

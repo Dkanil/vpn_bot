@@ -1,10 +1,17 @@
-import yaml
+import os, yaml
 
 with open('messages.yaml', 'r', encoding='utf-8') as f:
     MESSAGES = yaml.safe_load(f)
 
 
 class Config:
+    ADMIN_ID = int(os.environ['ADMIN_ID'])
+    API_TOKEN = os.environ['API_TOKEN']
+    BOT_TOKEN = os.environ['BOT_TOKEN']
+    URL = os.environ['URL'].rstrip('/')
+    SUB_URL = os.environ['SUB_URL'].rstrip('/')
+    INBOUND_IDS = os.environ['INBOUND_IDS'].split(",")
+
     access_denied_error = MESSAGES.get('access_denied_error')
     user_not_found_error = MESSAGES.get('user_not_found_error')
     unknown_error = MESSAGES.get('unknown_error')

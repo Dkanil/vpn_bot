@@ -1,6 +1,6 @@
-import json
-import aiohttp
+import aiohttp, json, logging
 
+logger = logging.getLogger(__name__)
 
 class AuthManager:
     _instance = None
@@ -38,36 +38,36 @@ class AuthManager:
     async def check_connection(self) -> bool:
         res = await self.api_request("GET", "/panel/api/server/status")
         if res.get("success"):
-            print("auth_manager: Successfully connected to 3x-ui by API token!")
+            logger.info("Successfully connected to 3x-ui by API token!")
             return True
         else:
-            print("auth_manager: 3x-ui connection error. Check URL and API_TOKEN.")
+            logger.error("3x-ui connection error. Check URL and API_TOKEN.")
             return False
 
     async def api_request(self, method: str, endpoint: str, **kwargs) -> dict:
         session = await self.get_session()
         full_url = f"{self.url}{endpoint}"
 
-        print(f"Request {method} -> {endpoint}")
+        logger.info(f"Request {method} -> {endpoint}")
 
         try:
             async with session.request(method, full_url, **kwargs) as resp:
                 body = await resp.text()
 
                 if resp.status in (401, 403):
-                    print(f"auth_manager: {resp.status} Access denied. Token is invalid! Response body: {body[:100]}")
+                    logger.error(f"{resp.status} Access denied. Token is invalid! Response body: {body[:100]}")
                     return {"success": False, "msg": "AUTH_REQUIRED"}
 
                 if resp.status == 404:
-                    print(f"auth_manager: 404 Not Found for {full_url}")
+                    logger.error(f"404 Not Found for {full_url}")
                     return {"success": False, "msg": f"404 Not Found: {full_url}"}
 
                 try:
                     return json.loads(body)
                 except json.JSONDecodeError:
-                    print(f"auth_manager: Not JSON in server response: {body[:200]}")
+                    logger.error(f"Not JSON in server response: {body[:200]}")
                     return {"success": False, "msg": "INVALID_JSON_RESPONSE"}
 
         except Exception as e:
-            print(f"auth_manager: Error connecting to the 3x-ui panel: {e}")
+            logger.error(f"Error connecting to the 3x-ui panel: {e}")
             return {"success": False, "msg": f"CONNECTION_ERROR: {e}"}

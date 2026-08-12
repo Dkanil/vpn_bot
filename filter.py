@@ -1,8 +1,8 @@
-from typing import Callable, Dict, Any, Awaitable
+import db
+
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message
-
-import db_manager
+from typing import Callable, Dict, Any, Awaitable
 from config import Config
 
 
@@ -16,9 +16,9 @@ class BannedUserMiddleware(BaseMiddleware):
         user = data.get("event_from_user")
 
         if user:
-            db_manager.update_username(user.id, user.username)
+            db.update_username(user.id, user.username)
 
-        if not user or db_manager.is_user_approved(user.id) != -1:
+        if not user or db.is_user_approved(user.id) != -1:
             return await handler(event, data)
         if isinstance(event, Message):
             await event.answer(Config.ban_message)
