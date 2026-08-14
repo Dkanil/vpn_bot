@@ -12,65 +12,65 @@ class Config:
     SUB_URL = os.environ['SUB_URL'].rstrip('/')
     INBOUND_IDS = os.environ['INBOUND_IDS'].split(",")
 
-    access_denied_error = MESSAGES.get('access_denied_error')
-    user_not_found_error = MESSAGES.get('user_not_found_error')
-    unknown_error = MESSAGES.get('unknown_error')
-    cancel_message = MESSAGES.get('cancel_message')
-    ban_message = MESSAGES.get('ban_message')
+    access_denied_error = MESSAGES['error']['access_denied']
+    user_not_found_error = MESSAGES['error']['user_not_found']
+    unknown_error = MESSAGES['error']['unknown']
 
-    subscription_expired = MESSAGES.get('subscription_expired')
-    subscription_expires = MESSAGES.get('subscription_expires')
+    cancel_message = MESSAGES['cancel']
+    ban_message = MESSAGES['ban']
 
-    paid_instruction = MESSAGES.get('paid_instruction')
+    paid_instruction = MESSAGES['paid']['instruction']
 
-    payment_notification_button = MESSAGES.get('payment_notification_button')
-    payment_notification = MESSAGES.get('payment_notification')
-    admin_payment_confirmation = MESSAGES.get('admin_payment_confirmation')
-    user_payment_confirm_button = MESSAGES.get('user_payment_confirm_button')
-    user_payment_confirm_wait_response = MESSAGES.get('user_payment_confirm_wait_response')
-    admin_payment_approve_button = MESSAGES.get('admin_payment_approve_button')
-    admin_payment_reject_button = MESSAGES.get('admin_payment_reject_button')
-    payment_confirmation_approve_response = MESSAGES.get('payment_confirmation_approve_response')
-    payment_confirmation_approve = MESSAGES.get('payment_confirmation_approve')
-    reject_response = MESSAGES.get('reject_response')
-    payment_confirmation_reject = MESSAGES.get('payment_confirmation_reject')
+    payment_broadcast_text = MESSAGES['payment']['broadcast']['text']
+    payment_broadcast_button = MESSAGES['payment']['broadcast']['button']
+    payment_broadcast_instruction = MESSAGES['payment']['broadcast']['instruction']
+    payment_broadcast_starting = MESSAGES['payment']['broadcast']['starting']
+    payment_broadcast_cancel = MESSAGES['payment']['broadcast']['cancel']
 
-    admin_subscription_update = MESSAGES.get('admin_subscription_update')
-    admin_subscription_warning_update = MESSAGES.get('admin_subscription_warning_update')
-    subscription_update = MESSAGES.get('subscription_update')
+    payment_admin_confirmation_request = MESSAGES['payment']['admin']['confirmation']['request']
+    payment_admin_approve_button = MESSAGES['payment']['admin']['button']['confirm']
+    payment_admin_reject_button = MESSAGES['payment']['admin']['button']['reject']
+    payment_admin_confirmation_success = MESSAGES['payment']['admin']['confirmation']['response']['success']
+    payment_admin_confirmation_warning = MESSAGES['payment']['admin']['confirmation']['response']['warning']
 
-    synchronize_status = MESSAGES.get('synchronize_status')
-    empty_users_list = MESSAGES.get('empty_users_list')
-    user_row = MESSAGES.get('user_row')
-    status_message = MESSAGES.get('status_message')
-    truncate_message = MESSAGES.get('truncate_message')
-    update_status_error = MESSAGES.get('update_status_error')
+    payment_client_confirm_button = MESSAGES['payment']['client']['confirm']['button']
+    payment_client_confirm_wait_response = MESSAGES['payment']['client']['confirm']['wait_response']
+    payment_client_approve_response = MESSAGES['payment']['client']['approve']['response']
+    payment_client_approve_text = MESSAGES['payment']['client']['approve']['text']
+    payment_client_reject_response = MESSAGES['payment']['client']['reject']['response']
+    payment_client_reject_text = MESSAGES['payment']['client']['reject']['text']
 
-    broadcast_instruction = MESSAGES.get('broadcast_instruction')
-    broadcast_starting = MESSAGES.get('broadcast_starting')
-    broadcast_success = MESSAGES.get('broadcast_success')
-    broadcast_error = MESSAGES.get('broadcast_error')
+    status_expired = MESSAGES['status']['expired']
+    status_expires = MESSAGES['status']['expires']
+    status_sync_wait = MESSAGES['status']['synchronization']['waiting']
+    status_sync_error = MESSAGES['status']['synchronization']['error']
+    status_client_table_empty = MESSAGES['status']['client_table']['empty']
+    status_client_table_row = MESSAGES['status']['client_table']['row']
+    status_message_text = MESSAGES['status']['message']['text']
+    status_message_truncate = MESSAGES['status']['message']['truncate']
 
-    payment_broadcast_instruction = MESSAGES.get('payment_broadcast_instruction')
-    payment_broadcast_cancel = MESSAGES.get('payment_broadcast_cancel')
-    payment_broadcast_starting = MESSAGES.get('payment_broadcast_starting')
+    broadcast_instruction = MESSAGES['broadcast']['instruction']
+    broadcast_starting = MESSAGES['broadcast']['starting']
+    broadcast_success = MESSAGES['broadcast']['success']
+    broadcast_error = MESSAGES['broadcast']['error']
 
-    database_backup_not_found = MESSAGES.get('database_backup_not_found')
-    database_backup_caption = MESSAGES.get('database_backup_caption')
-    database_backup_failed = MESSAGES.get('database_backup_failed')
 
-    create_token_wait = MESSAGES.get('create_token_wait')
-    create_token_error = MESSAGES.get('create_token_error')
-    create_token_success = MESSAGES.get('create_token_success')
+    database_backup_not_found = MESSAGES['database_backup']['not_found']
+    database_backup_failed = MESSAGES['database_backup']['failed']
+    database_backup_caption = MESSAGES['database_backup']['caption']
 
-    start_command_wait_response = MESSAGES.get('start_command_wait_response')
-    start_command_retry_response = MESSAGES.get('start_command_retry_response')
-    admin_register_user_approve = MESSAGES.get('admin_register_user_approve')
-    admin_register_user_reject = MESSAGES.get('admin_register_user_reject')
-    admin_register_request = MESSAGES.get('admin_register_request')
-    register_approve_response = MESSAGES.get('register_approve_response')
-    register_approve = MESSAGES.get('register_approve')
-    register_reject = MESSAGES.get('register_reject')
+    create_token_wait = MESSAGES['create_token']['wait']
+    create_token_error = MESSAGES['create_token']['error']
+    create_token_success = MESSAGES['create_token']['success']
 
-    admin_instruction = MESSAGES.get('admin_instruction')
-    instruction = MESSAGES.get('instruction')
+    register_admin_button_approve = MESSAGES['register']['admin']['button']['approve']
+    register_admin_button_reject = MESSAGES['register']['admin']['button']['reject']
+    register_admin_new_client = MESSAGES['register']['admin']['new_client']
+    register_client_wait_response = MESSAGES['register']['client']['response']['wait']
+    register_client_retry_response = MESSAGES['register']['client']['response']['retry']
+    register_client_approve_response = MESSAGES['register']['client']['approve']['response']
+    register_client_approve_text = MESSAGES['register']['client']['approve']['text']
+    register_client_reject = MESSAGES['register']['client']['reject']
+
+    admin_instruction = MESSAGES['instruction']['admin']
+    instruction = MESSAGES['instruction']['common']

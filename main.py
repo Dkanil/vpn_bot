@@ -74,13 +74,13 @@ async def sync_all_users_from_panel(auth: Authenticator):
 
 async def send_admin_individual_notification(tg_id, username, email, status):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=Config.payment_notification_button, callback_data="admin_broadcast_payment")]
+        [InlineKeyboardButton(text=Config.payment_broadcast_button, callback_data="admin_broadcast_payment")]
     ])
 
-    text = Config.payment_notification.format(tg_id=tg_id,
-                                              username=html.escape(username if username else ""),
-                                              email=html.escape(email),
-                                              status=status)
+    text = Config.payment_broadcast_text.format(tg_id=tg_id,
+                                                username=html.escape(username if username else ""),
+                                                email=html.escape(email),
+                                                status=status)
 
     await bot.send_message(Config.ADMIN_ID, text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -102,11 +102,11 @@ async def background_payment_check(auth: Authenticator):
 
                 if left_seconds <= 0 and notify_level < 2:
                     db.set_notify_level(tg_id, 2)
-                    await send_admin_individual_notification(tg_id, username, email, Config.subscription_expired)
+                    await send_admin_individual_notification(tg_id, username, email, Config.status_expired)
 
                 elif 0 < left_seconds <= 7 * 24 * 3600 and notify_level < 1:
                     db.set_notify_level(tg_id, 1)
-                    await send_admin_individual_notification(tg_id, username, email, Config.subscription_expires)
+                    await send_admin_individual_notification(tg_id, username, email, Config.status_expires)
 
                 elif left_seconds > 7 * 24 * 3600 and notify_level > 0:
                     db.set_notify_level(tg_id, 0)
@@ -132,12 +132,12 @@ async def mark_paid_cmd(message: types.Message, command: CommandObject):
     months = int(parts[1]) if len(parts) > 1 else 3
 
     if db.extend_payment(tg_id, months):
-        await message.answer(Config.admin_subscription_update.format(tg_id=tg_id, months=months),
+        await message.answer(Config.payment_admin_confirmation_success.format(tg_id=tg_id, months=months),
                              parse_mode=ParseMode.HTML)
         try:
-            await bot.send_message(tg_id, Config.subscription_update.format(months=months), parse_mode=ParseMode.HTML)
+            await bot.send_message(tg_id, Config.payment_client_approve_text.format(months=months), parse_mode=ParseMode.HTML)
         except Exception:
-            await message.answer(Config.admin_subscription_warning_update.format(tg_id=tg_id),
+            await message.answer(Config.payment_admin_confirmation_warning.format(tg_id=tg_id),
                                  parse_mode=ParseMode.HTML)
     else:
         await message.answer(Config.user_not_found_error.format(tg_id=tg_id), parse_mode=ParseMode.HTML)
@@ -148,21 +148,21 @@ async def handle_user_payment_notify(call: types.CallbackQuery):
     tg_id = call.from_user.id
     username = call.from_user.username or ""
 
-    await call.message.edit_text(f"{call.message.text}\n\n{Config.user_payment_confirm_wait_response}",
+    await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_client_confirm_wait_response}",
                                  parse_mode=ParseMode.HTML)
 
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=Config.admin_payment_approve_button,
+            InlineKeyboardButton(text=Config.payment_admin_approve_button,
                                  callback_data=PaymentAction(action="approve", user_id=tg_id).pack()),
-            InlineKeyboardButton(text=Config.admin_payment_reject_button,
+            InlineKeyboardButton(text=Config.payment_admin_reject_button,
                                  callback_data=PaymentAction(action="reject", user_id=tg_id).pack())
         ]
     ])
 
     await bot.send_message(
         Config.ADMIN_ID,
-        Config.admin_payment_confirmation.format(tg_id=tg_id, username=html.escape(username)),
+        Config.payment_admin_confirmation_request.format(tg_id=tg_id, username=html.escape(username)),
         parse_mode=ParseMode.HTML,
         reply_markup=admin_kb
     )
@@ -178,21 +178,21 @@ async def handle_admin_payment_decision(call: types.CallbackQuery, callback_data
 
     if callback_data.action == "approve":
         if db.extend_payment(target_id, 3):
-            await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_confirmation_approve_response}",
+            await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_client_approve_response}",
                                          parse_mode=ParseMode.HTML)
 
             try:
-                await bot.send_message(target_id, Config.payment_confirmation_approve, parse_mode=ParseMode.HTML)
+                await bot.send_message(target_id, Config.payment_client_approve_text.format(months=3), parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Error in handle_admin_payment_decision: {e}")
         else:
             await call.message.edit_text(f"{call.message.text}\n\n{Config.unknown_error}")
 
     elif callback_data.action == "reject":
-        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode=ParseMode.HTML)
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_client_reject_response}", parse_mode=ParseMode.HTML)
 
         try:
-            await bot.send_message(target_id, Config.payment_confirmation_reject, parse_mode=ParseMode.HTML)
+            await bot.send_message(target_id, Config.payment_client_reject_text, parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.error(f"Error in handle_admin_payment_decision: {e}")
 
@@ -204,7 +204,7 @@ async def status_cmd(message: types.Message, auth: Authenticator):
     if message.from_user.id != Config.ADMIN_ID:
         return
 
-    status_msg = await message.answer(Config.synchronize_status)
+    status_msg = await message.answer(Config.status_sync_wait)
 
     try:
         await sync_all_users_from_panel(auth)
@@ -213,30 +213,30 @@ async def status_cmd(message: types.Message, auth: Authenticator):
 
         def format_users(users):
             if not users:
-                return Config.empty_users_list
+                return Config.status_client_table_empty
             res = ""
             for tg_id, username, email in users:
-                res += Config.user_row.format(tg_id=tg_id,
-                                              username=html.escape(f"@{username}" if username else ""),
-                                              email=html.escape(email))
+                res += Config.status_client_table_row.format(tg_id=tg_id,
+                                                             username=html.escape(f"@{username}" if username else ""),
+                                                             email=html.escape(email))
             return res
 
-        text = (Config.status_message.format(paid_count=len(paid), paid_list=format_users(paid),
-                                             expires_count=len(expires), expires_list=format_users(expires),
-                                             expired_count=len(expired), expired_list=format_users(expired)))
+        text = (Config.status_message_text.format(paid_count=len(paid), paid_list=format_users(paid),
+                                                  expires_count=len(expires), expires_list=format_users(expires),
+                                                  expired_count=len(expired), expired_list=format_users(expired)))
 
         if len(text) > 4000:
-            text = text[:4000] + Config.truncate_message
+            text = text[:4000] + Config.status_message_truncate
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=Config.payment_notification_button, callback_data="admin_broadcast_payment")]
+            [InlineKeyboardButton(text=Config.payment_broadcast_button, callback_data="admin_broadcast_payment")]
         ])
 
         await status_msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     except Exception as e:
         logger.error(f"Error processing command /status: {e}")
-        await status_msg.edit_text(Config.update_status_error)
+        await status_msg.edit_text(Config.status_sync_error)
 
 
 @dp.callback_query(F.data == "admin_broadcast_payment")
@@ -270,7 +270,7 @@ async def send_payment_message(message: types.Message, state: FSMContext):
     count = 0
 
     user_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=Config.user_payment_confirm_button, callback_data="user_notified_payment")]
+        [InlineKeyboardButton(text=Config.payment_client_confirm_button, callback_data="user_notified_payment")]
     ])
 
     for tg_id in targets:
@@ -413,20 +413,20 @@ async def start_cmd(message: types.Message):
     status = db.is_user_approved(tg_id)
     if status is None:
         db.add_user(tg_id, 0)
-        await message.answer(Config.start_command_wait_response)
+        await message.answer(Config.register_client_wait_response)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=Config.admin_register_user_approve,
+                    text=Config.register_admin_button_approve,
                     callback_data=AdminAction(action="approve", user_id=tg_id).pack()
                 ),
                 InlineKeyboardButton(
-                    text=Config.admin_register_user_reject,
+                    text=Config.register_admin_button_reject,
                     callback_data=AdminAction(action="reject", user_id=tg_id).pack()
                 )]
         ])
         username = message.from_user.username
-        await bot.send_message(Config.ADMIN_ID, Config.admin_register_request.format(
+        await bot.send_message(Config.ADMIN_ID, Config.register_admin_new_client.format(
             full_name=html.escape(message.from_user.full_name),
             username=html.escape(f"@{username}" if username else ""),
             tg_id=tg_id
@@ -434,7 +434,7 @@ async def start_cmd(message: types.Message):
     elif status >= 1:
         await help_cmd(message)
     elif status == 0:
-        await message.answer(Config.start_command_retry_response)
+        await message.answer(Config.register_client_retry_response)
 
 
 @dp.callback_query(AdminAction.filter())
@@ -447,14 +447,14 @@ async def handle_admin_action(call: types.CallbackQuery, callback_data: AdminAct
 
     if callback_data.action == "approve":
         db.add_user(target_user_id, 1)
-        await call.message.edit_text(f"{call.message.text}\n\n{Config.register_approve_response}",
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.register_client_approve_response}",
                                      parse_mode=ParseMode.HTML)
-        await bot.send_message(target_user_id, Config.register_approve)
+        await bot.send_message(target_user_id, Config.register_client_approve_text)
 
     elif callback_data.action == "reject":
         db.add_user(target_user_id, -1)
-        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode=ParseMode.HTML)
-        await bot.send_message(target_user_id, Config.register_reject)
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_client_reject_response}", parse_mode=ParseMode.HTML)
+        await bot.send_message(target_user_id, Config.register_client_reject)
 
 
 @dp.message(Command('broadcast'))
