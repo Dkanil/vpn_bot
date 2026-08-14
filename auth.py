@@ -2,12 +2,12 @@ import aiohttp, json, logging
 
 logger = logging.getLogger(__name__)
 
-class AuthManager:
+class Authenticator:
     _instance = None
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(AuthManager, cls).__new__(cls)
+            cls._instance = super(Authenticator, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 

@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFil
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from auth import AuthManager
+from auth import Authenticator
 from config import Config
 from urllib.parse import quote
 
@@ -45,7 +45,7 @@ def generate_sub_id(length: int = 16) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-async def sync_all_users_from_panel(auth: AuthManager):
+async def sync_all_users_from_panel(auth: Authenticator):
     res = await auth.api_request("GET", "/panel/api/clients/list")
     if not res.get("success"):
         return
@@ -85,7 +85,7 @@ async def send_admin_individual_notification(tg_id, username, email, status):
     await bot.send_message(Config.ADMIN_ID, text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
-async def background_payment_check(auth: AuthManager):
+async def background_payment_check(auth: Authenticator):
     await asyncio.sleep(10)
 
     while True:
@@ -200,7 +200,7 @@ async def handle_admin_payment_decision(call: types.CallbackQuery, callback_data
 
 
 @dp.message(Command('status'))
-async def status_cmd(message: types.Message, auth: AuthManager):
+async def status_cmd(message: types.Message, auth: Authenticator):
     if message.from_user.id != Config.ADMIN_ID:
         return
 
@@ -309,7 +309,7 @@ async def get_db_cmd(message: types.Message):
         await message.reply(Config.database_backup_failed)
 
 
-async def add_vpn_client(user_info, auth: AuthManager, target_inbounds: list[int]):
+async def add_vpn_client(user_info, auth: Authenticator, target_inbounds: list[int]):
     user_email = get_user_emails(user_info)[0]
     tg_id = user_info.id
     sub_id = generate_sub_id()
@@ -347,7 +347,7 @@ async def add_vpn_client(user_info, auth: AuthManager, target_inbounds: list[int
     return None, log_message
 
 
-async def resolve_existing_client(user_info, auth: AuthManager):
+async def resolve_existing_client(user_info, auth: Authenticator):
     tg_id = user_info.id
     saved_email = db.get_user_email(tg_id)
     if saved_email:
@@ -366,7 +366,7 @@ async def resolve_existing_client(user_info, auth: AuthManager):
     return None
 
 
-async def get_client_credentials(user_info, auth: AuthManager):
+async def get_client_credentials(user_info, auth: Authenticator):
     target_inbounds = [int(i.strip()) for i in Config.INBOUND_IDS]
 
     existing_client = await resolve_existing_client(user_info, auth)
@@ -392,7 +392,7 @@ async def get_client_credentials(user_info, auth: AuthManager):
     return sub_id
 
 
-async def get_client_by_email(email: str, auth: AuthManager):
+async def get_client_by_email(email: str, auth: Authenticator):
     response = await auth.api_request("GET", f"/panel/api/clients/get/{quote(email, safe='')}")
     if not response.get("success"):
         return None
@@ -488,7 +488,7 @@ async def broadcast_command(message: types.Message, command: CommandObject):
 
 
 @dp.message(Command('create_token'))
-async def create_token(message: types.Message, auth: AuthManager):
+async def create_token(message: types.Message, auth: Authenticator):
     tg_id = message.from_user.id
     status = db.is_user_approved(tg_id)
     if status is None or status < 1:
@@ -532,7 +532,7 @@ async def help_cmd(message: types.Message):
 async def main():
     logging.basicConfig(level=logging.INFO)
     db.init_db()
-    auth = AuthManager(
+    auth = Authenticator(
         url=Config.URL,
         api_token=Config.API_TOKEN,
     )
