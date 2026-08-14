@@ -67,10 +67,11 @@ Description=VPN_BOT_AUTORUN
 After=network.target
 
 [Service]
-ExecStart=/root/vpn_bot/.venv/bin/python3 /root/vpn_bot/Main.py
+ExecStart=/root/vpn_bot/.venv/bin/python3 /root/vpn_bot/main.py
 WorkingDirectory=/root/vpn_bot/
 Restart=always
 User=root
+EnvironmentFile=/root/vpn_bot/.env
 
 [Install]
 WantedBy=multi-user.target
