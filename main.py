@@ -82,7 +82,7 @@ async def send_admin_individual_notification(tg_id, username, email, status):
                                               email=html.escape(email),
                                               status=status)
 
-    await bot.send_message(Config.ADMIN_ID, text, parse_mode="HTML", reply_markup=kb)
+    await bot.send_message(Config.ADMIN_ID, text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 async def background_payment_check(auth: AuthManager):
@@ -132,13 +132,15 @@ async def mark_paid_cmd(message: types.Message, command: CommandObject):
     months = int(parts[1]) if len(parts) > 1 else 3
 
     if db.extend_payment(tg_id, months):
-        await message.answer(Config.admin_subscription_update.format(tg_id=tg_id, months=months), parse_mode="HTML")
+        await message.answer(Config.admin_subscription_update.format(tg_id=tg_id, months=months),
+                             parse_mode=ParseMode.HTML)
         try:
-            await bot.send_message(tg_id, Config.subscription_update.format(months=months), parse_mode="HTML")
+            await bot.send_message(tg_id, Config.subscription_update.format(months=months), parse_mode=ParseMode.HTML)
         except Exception:
-            await message.answer(Config.admin_subscription_warning_update.format(tg_id=tg_id))
+            await message.answer(Config.admin_subscription_warning_update.format(tg_id=tg_id),
+                                 parse_mode=ParseMode.HTML)
     else:
-        await message.answer(Config.user_not_found_error.format(tg_id=tg_id))
+        await message.answer(Config.user_not_found_error.format(tg_id=tg_id), parse_mode=ParseMode.HTML)
 
 
 @dp.callback_query(F.data == "user_notified_payment")
@@ -147,7 +149,7 @@ async def handle_user_payment_notify(call: types.CallbackQuery):
     username = call.from_user.username or ""
 
     await call.message.edit_text(f"{call.message.text}\n\n{Config.user_payment_confirm_wait_response}",
-                                 parse_mode="HTML")
+                                 parse_mode=ParseMode.HTML)
 
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -160,8 +162,8 @@ async def handle_user_payment_notify(call: types.CallbackQuery):
 
     await bot.send_message(
         Config.ADMIN_ID,
-        Config.payment_confirmation.format(tg_id=tg_id, username=html.escape(username)),
-        parse_mode="HTML",
+        Config.admin_payment_confirmation.format(tg_id=tg_id, username=html.escape(username)),
+        parse_mode=ParseMode.HTML,
         reply_markup=admin_kb
     )
     await call.answer()
@@ -177,20 +179,20 @@ async def handle_admin_payment_decision(call: types.CallbackQuery, callback_data
     if callback_data.action == "approve":
         if db.extend_payment(target_id, 3):
             await call.message.edit_text(f"{call.message.text}\n\n{Config.payment_confirmation_approve_response}",
-                                         parse_mode="HTML")
+                                         parse_mode=ParseMode.HTML)
 
             try:
-                await bot.send_message(target_id, Config.payment_confirmation_approve, parse_mode="HTML")
+                await bot.send_message(target_id, Config.payment_confirmation_approve, parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Error in handle_admin_payment_decision: {e}")
         else:
             await call.message.edit_text(f"{call.message.text}\n\n{Config.unknown_error}")
 
     elif callback_data.action == "reject":
-        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode="HTML")
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode=ParseMode.HTML)
 
         try:
-            await bot.send_message(target_id, Config.payment_confirmation_reject, parse_mode="HTML")
+            await bot.send_message(target_id, Config.payment_confirmation_reject, parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.error(f"Error in handle_admin_payment_decision: {e}")
 
@@ -230,7 +232,7 @@ async def status_cmd(message: types.Message, auth: AuthManager):
             [InlineKeyboardButton(text=Config.payment_notification_button, callback_data="admin_broadcast_payment")]
         ])
 
-        await status_msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await status_msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     except Exception as e:
         logger.error(f"Error processing command /status: {e}")
@@ -241,7 +243,7 @@ async def status_cmd(message: types.Message, auth: AuthManager):
 async def ask_payment_message(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id != Config.ADMIN_ID:
         return
-    await call.message.answer(Config.payment_broadcast_instruction, parse_mode="HTML")
+    await call.message.answer(Config.payment_broadcast_instruction, parse_mode=ParseMode.HTML)
     await state.set_state(BroadcastState.waiting_for_payment_message)
     await call.answer()
 
@@ -273,7 +275,7 @@ async def send_payment_message(message: types.Message, state: FSMContext):
 
     for tg_id in targets:
         try:
-            await bot.send_message(tg_id, message.text, parse_mode="HTML", reply_markup=user_kb)
+            await bot.send_message(tg_id, message.text, parse_mode=ParseMode.HTML, reply_markup=user_kb)
             count += 1
             await asyncio.sleep(0.1)
         except Exception:
@@ -291,7 +293,7 @@ async def get_db_cmd(message: types.Message):
     db_path = "users.db"
 
     if not os.path.exists(db_path):
-        await message.reply(Config.database_backup_not_found, parse_mode="HTML")
+        await message.reply(Config.database_backup_not_found, parse_mode=ParseMode.HTML)
         return
 
     try:
@@ -300,7 +302,7 @@ async def get_db_cmd(message: types.Message):
         await message.reply_document(
             document=db_file,
             caption=Config.database_backup_caption,
-            parse_mode="HTML"
+            parse_mode=ParseMode.HTML
         )
     except Exception as e:
         logger.error(f"Error sending database backup: {e}")
@@ -375,7 +377,8 @@ async def get_client_credentials(user_info, auth: AuthManager):
             missing_inbounds = list(set(target_inbounds) - set(existing_inbounds))
 
             if missing_inbounds:
-                logger.info(f"Connecting user with email {existing_client['email']} to missing inbounds: {missing_inbounds}")
+                logger.info(
+                    f"Connecting user with email {existing_client['email']} to missing inbounds: {missing_inbounds}")
                 await auth.api_request(
                     "POST",
                     f"/panel/api/clients/{quote(existing_client['email'], safe='')}/attach",
@@ -423,10 +426,11 @@ async def start_cmd(message: types.Message):
                 )]
         ])
         username = message.from_user.username
-        await bot.send_message(Config.ADMIN_ID,
-                               Config.admin_register_request.format(full_name=message.from_user.full_name,
-                                                                    username=username if username else "",
-                                                                    tg_id=tg_id), reply_markup=kb)
+        await bot.send_message(Config.ADMIN_ID, Config.admin_register_request.format(
+            full_name=html.escape(message.from_user.full_name),
+            username=html.escape(f"@{username}" if username else ""),
+            tg_id=tg_id
+        ), reply_markup=kb, parse_mode=ParseMode.HTML)
     elif status >= 1:
         await help_cmd(message)
     elif status == 0:
@@ -443,12 +447,13 @@ async def handle_admin_action(call: types.CallbackQuery, callback_data: AdminAct
 
     if callback_data.action == "approve":
         db.add_user(target_user_id, 1)
-        await call.message.edit_text(f"{call.message.text}\n\n{Config.register_approve_response}", parse_mode="HTML")
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.register_approve_response}",
+                                     parse_mode=ParseMode.HTML)
         await bot.send_message(target_user_id, Config.register_approve)
 
     elif callback_data.action == "reject":
         db.add_user(target_user_id, -1)
-        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode="HTML")
+        await call.message.edit_text(f"{call.message.text}\n\n{Config.reject_response}", parse_mode=ParseMode.HTML)
         await bot.send_message(target_user_id, Config.register_reject)
 
 
@@ -501,7 +506,7 @@ async def create_token(message: types.Message, auth: AuthManager):
         text = Config.create_token_success.format(sub_link=sub_link)
 
         db.add_user(tg_id, 2)
-        await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
+        await msg.edit_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
     except Exception as e:
         logger.error(f"Error generating token: {e}")

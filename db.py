@@ -158,4 +158,3 @@ def get_users_by_payment_status():
             status_minus_1.append(user_info)
 
     return status_1, status_0, status_minus_1
-    

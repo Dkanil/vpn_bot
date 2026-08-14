@@ -7,7 +7,9 @@ ban_message: 🚫 Вы заблокированы и не можете испо�
 
 subscription_expired: 🔴 ПРОСРОЧЕНО
 subscription_expires: 🟡 ИСТЕКАЕТ (менее 7 дней)
-paid_instruction: "Использование: /paid <tg_id> [кол-во месяцев (по умолчанию 3)]\nПример: /paid 123456789 3"
+paid_instruction: |
+  Использование: /paid <tg_id> [кол-во месяцев (по умолчанию 3)]
+  Пример: /paid 123456789 3
 payment_notification_button: 📢 Сделать рассылку должникам
 payment_notification: |
   🔔 <b>Подошел срок оплаты!</b>
@@ -42,7 +44,9 @@ payment_confirmation_reject: |
 admin_subscription_update: ✅ Подписка для пользователь <a href='tg://user?id={tg_id}'>{tg_id}</a> продлена на {months} мес
 admin_subscription_warning_update: ⚠️ Подписка продлена, но пользователь <a href='tg://user?id={tg_id}'>{tg_id}</a> заблокировал бота
 
-subscription_update: 🎉 <b>Спасибо за оплату!</b>\nВаша подписка на VPN успешно продлена на {months} мес
+subscription_update: |
+  🎉 <b>Спасибо за оплату!</b>
+  Ваша подписка на VPN успешно продлена на {months} мес
 synchronize_status: 🔄 Синхронизирую данные с панелью, подождите...
 empty_users_list: <i>Пусто</i>
 user_row: "  - <a href='tg://user?id={tg_id}'>{tg_id}</a> | {username} | 📧 {email}\n"
